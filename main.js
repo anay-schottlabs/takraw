@@ -1739,6 +1739,7 @@ function onActionKey(code) {
   if (code === 'Escape') { toggleHelp(false); return; }
   if (code === 'KeyN') { setMuted(!sfx.muted); return; }
   if (!playing || helpOpen()) return;
+  if (training && /^(Digit|Numpad)[1-5]$/.test(code)) { setDrill(DRILLS[+code.slice(-1) - 1]); return; }
   if (code === 'ArrowUp') aimStep(1, 0);
   if (code === 'ArrowDown') aimStep(-1, 0);
   if (code === 'ArrowLeft') aimStep(0, -1);
@@ -2641,7 +2642,7 @@ function applyPoint(loser, reason) {
     match.serveCount++;
     if (match.serveCount >= 3) { match.serveCount = 0; match.server = other(match.server); if (teamMode()) pickServer(match.server); }
     const a = match.score.left, b = match.score.right;
-    if (Math.max(a, b) >= WIN_SCORE) match.over = true;   // first to 7 wins
+    if (Math.max(a, b) >= WIN_SCORE && !training) match.over = true;   // first to 7 wins (training never ends)
   }
   match.phase = 'point';
   pointTimer = 2.0;
@@ -3032,7 +3033,7 @@ function updateHint() {
   if (!me) return;
   let h = '';
   const atNet = Math.abs(me.pos.x) <= BLOCK_X + 0.3;
-  if (smashWarn.on) h = smashWarn.inPos ? 'In position  ·  J on GREEN to dig' : atNet && !smashIncoming() ? 'L  block as it crosses  ·  or get to the red mark' : 'Smash incoming  ·  get to the red mark';
+  if (smashWarn.on) h = smashWarn.inPos ? 'In position  ·  J on GREEN to dig' : atNet && !smashIncoming() ? 'L  block as it crosses  ·  or get to the ring' : 'Smash incoming  ·  get to the ring';
   else if (match.phase === 'idle') h = 'J  serve      F  ball feed';
   else if (match.phase === 'wait') h = 'Waiting for the host…';
   else if (match.phase === 'serve-wait') h = iServe() ? `J  toss, then J on green      arrows  aim (${AIM_NAMES[aimCell.row][aimCell.col]})` : (teamMode() && match.server === me.side ? `${(playerById(match.serverId) || {}).displayName || 'Teammate'} to serve` : `${sideName(match.server)} to serve`);
@@ -3087,23 +3088,32 @@ const CPU_LEVELS = {
   easy:   { react: 0.42, speed: 3.1, perfect: 0.25, good: 0.45, spike: 0.2, dig: 0.3,  readOut: 0.5,  serveDelay: 1.8 },
   normal: { react: 0.26, speed: 3.7, perfect: 0.45, good: 0.4,  spike: 0.5, dig: 0.55, readOut: 0.85, serveDelay: 1.4 },
   hard:   { react: 0.14, speed: 4.3, perfect: 0.7,  good: 0.25, spike: 0.8, dig: 0.8,  readOut: 1.0,  serveDelay: 1.1 },
+  // training bot: perfect every time, gets to everything, never plays a ball that's going out
+  train:  { react: 0.04, speed: 9.0, perfect: 1.0,  good: 0,    spike: 1.0, dig: 1.0,  readOut: 1.0,  serveDelay: 1.0 },
 };
 let cpuLevel = 'normal';
 try { cpuLevel = localStorage.getItem('takraw-cpu') || 'normal'; } catch {}
-// test mode: force the CPU to play one kind of shot every time (menu / H → options)
-let cpuMove = 'mixed';
-try { cpuMove = localStorage.getItem('takraw-cpu-move') || 'mixed'; } catch {}
-function setCpuMove(v) {
-  cpuMove = ['mixed', 'smash', 'spike', 'clear', 'kick'].includes(v) ? v : 'mixed';
-  try { localStorage.setItem('takraw-cpu-move', cpuMove); } catch {}
-  for (const id of ['cpu-move', 'opt-cpu-move']) { const el = document.getElementById(id); if (el) el.value = cpuMove; }
+// TRAINING: an unbeatable bot whose move you pick in-game with 1–5 (the normal CPU always plays mixed)
+let training = false;
+let trainDrill = 'mixed';
+try { trainDrill = localStorage.getItem('takraw-drill') || 'mixed'; } catch {}
+const DRILLS = ['mixed', 'smash', 'spike', 'clear', 'kick'];
+const DRILL_NAMES = { mixed: 'Mixed', smash: 'Always smash', spike: 'Set + spike', clear: 'High clear', kick: 'Kick back' };
+const cpuMoveNow = () => (training ? trainDrill : 'mixed');
+const cpuL = () => CPU_LEVELS[training ? 'train' : cpuLevel];
+function setDrill(d) {
+  if (!DRILLS.includes(d)) return;
+  trainDrill = d;
+  try { localStorage.setItem('takraw-drill', d); } catch {}
+  for (const r of document.querySelectorAll('#train-panel .tp-row')) r.classList.toggle('on', r.dataset.d === d);
+  if (training && playing) { ui.ping.textContent = `TRAINING · ${DRILL_NAMES[d].toUpperCase()}`; showBanner(DRILL_NAMES[d], 'training bot', 'var(--gold)'); }
 }
 const cpu = { serial: -1, reactT: 0, target: null, plan: null, swung: false, serveT: 0, served: false, willPlay: true, digOk: false, cell: null, pickAimSoon: true };
 let ballSerial = 0;                      // bumps every time the ball's flight changes (any touch)
 
 const cpuOn = () => mode === 'cpu' && !!them;
 function cpuRollTier() {
-  const L = CPU_LEVELS[cpuLevel], r = Math.random();
+  const L = cpuL(), r = Math.random();
   return r < L.perfect ? 2 : r < L.perfect + L.good ? 1 : 0;
 }
 // pick one of the 9 spots on my (the human's) side, preferring ones far from where I'm standing
@@ -3242,7 +3252,7 @@ function isChaser(p) {
   return best === p;
 }
 function cpuThink(p, ai, dt) {
-  const s = sideSign(p.side), L = CPU_LEVELS[cpuLevel];
+  const s = sideSign(p.side), L = cpuL();
   if (ai.pickAimSoon && match.phase !== 'serve-toss') { ai.pickAimSoon = false; cpuPickAim(p, ai); }
   let tx = -s * 4.2, tz = 0, run = true;          // home spot: middle of my half
   if (teamMode() && p.slot === 'front') { tx = -s * 2.2; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5); }
@@ -3281,6 +3291,7 @@ function cpuThink(p, ai, dt) {
       else if (c === 1) ai.plan = Math.random() < L.spike ? 'set' : 'kick';
       else ai.plan = match.settled && Math.abs(ball.x) < 3.4 ? 'spike' : 'kick';
       if (c === 1 && ai.plan === 'kick' && match.settled && Math.random() < L.spike * 0.6) ai.plan = 'spike';
+      const cpuMove = cpuMoveNow();
       if (!attack && cpuMove !== 'mixed') {
         if (cpuMove === 'smash' || cpuMove === 'clear') ai.plan = c < 2 && cpuIntercept(p, 2.45) ? cpuMove : (c === 0 ? 'control' : 'kick');
         else if (cpuMove === 'spike') ai.plan = c === 0 ? 'control' : c === 1 ? 'set' : 'spike';
@@ -3305,7 +3316,7 @@ function cpuThink(p, ai, dt) {
         const inReach = d < 0.9 && ball.vy < 0 && (p.y > 0.12 ? hr < 2.2 && hr > 1.0 : hr < 1.35 && hr > 0.35);
         if (inReach && P.sideOfX(ball.x) === p.side) {
           ai.swung = true;
-          const tier = cpuMove !== 'mixed' ? Math.max(1, cpuRollTier()) : cpuRollTier();   // forced moves always come off
+          const tier = cpuRollTier();
           if (ai.plan === 'dig') { if (ai.digOk) cpuShot(p, ai, 'DIG', 2); }
           else if (ai.plan === 'control' || ai.plan === 'set') cpuShot(p, ai, 'J', tier);
           else cpuShot(p, ai, 'K', tier, ai.plan);
@@ -3342,13 +3353,19 @@ function cpuThink(p, ai, dt) {
   updateRing(p);
 }
 
-function playCPU() {
+function playTraining() {
+  playCPU(true);
+}
+function playCPU(train = false) {
+  training = train === true;
+  $('train-panel').classList.toggle('hidden', !training);
   readName(); showError('');
   mode = 'cpu';
   roomCode = '';
   startGame('left');
   spawnRemote('right', `CPU · ${cpuLevel.toUpperCase()}`);
-  them.displayName = `CPU (${cpuLevel})`;
+  them.displayName = training ? 'Training bot' : `CPU (${cpuLevel})`;
+  if (training) setDrill(trainDrill);
   cpuStartMatch();
   resetMatch();
   setStatus('');
@@ -3950,6 +3967,7 @@ function teardown() {
   links.clear();
   if (others.size) { for (const p of others.values()) p.dispose(); others.clear(); them = null; }
   fmt = '1v1'; roster = []; myId = 'h';
+  training = false; $('train-panel').classList.add('hidden');
   $('room').classList.add('hidden');
   if (me) { me.dispose(); me = null; }
   if (them) { them.dispose(); them = null; }
@@ -3967,8 +3985,8 @@ $('create-btn').onclick = () => hostGame();
 $('join-btn').onclick = joinGame;
 $('practice-btn').onclick = practice;
 $('cpu-btn').onclick = playCPU;
-setCpuMove(cpuMove);
-for (const id of ['cpu-move', 'opt-cpu-move']) { const el = document.getElementById(id); if (el) el.onchange = (e) => setCpuMove(e.target.value); }
+$('train-btn').onclick = playTraining;
+setDrill(trainDrill);
 for (const b of document.querySelectorAll('.cpu-lvl')) {
   b.classList.toggle('on', b.dataset.lvl === cpuLevel);
   b.onclick = () => {

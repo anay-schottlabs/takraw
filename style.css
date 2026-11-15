@@ -308,4 +308,13 @@ button { font-family: inherit; }
 .rs-btn.rm { color: var(--red); }
 @media (max-width: 480px) { .room-cols { grid-template-columns: 1fr; } }
 .lr-code.team { letter-spacing: 1px; font-size: 14px; }
-.cpu-move { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 6px; font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.train-btn { width: 100%; margin-top: 8px; }
+.train-btn small { font-weight: 600; opacity: .65; letter-spacing: 0; text-transform: none; }
+#train-panel { position: fixed; left: 16px; top: 72px; z-index: 5; background: rgba(10,10,14,.72); border: 1px solid var(--line); padding: 8px 10px; font-size: 13px; pointer-events: none; }
+.tp-title { font-family: var(--display); font-weight: 800; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.tp-row { padding: 2px 4px; color: var(--muted); }
+.tp-row b { display: inline-block; width: 16px; color: var(--text); }
+.tp-row.on { color: #08131c; background: var(--gold); font-weight: 700; }
+.tp-row.on b { color: #08131c; }
+@media (max-width: 700px) { #train-panel { top: auto; bottom: 64px; } }
+#zone-chip { display: none !important; }
