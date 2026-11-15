@@ -1681,7 +1681,7 @@ function applyPoint(loser, reason) {
 }
 
 function nextServe() {
-  resetAim();
+  // (aim is NOT reset here — it only resets after you take your shot, so you can line up the next one any time)
   match.rally++;
   match.phase = mode === 'solo' ? 'idle' : match.over ? 'over' : 'serve-wait';
   match.poss = null; match.cnt = 0; match.last = null; match.settled = false;
