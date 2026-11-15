@@ -1333,24 +1333,30 @@ let lastBallSide = null;
 const ballTint = new THREE.Color(0xffffff), _tc = new THREE.Color();
 // their aim spot, shown on my court as a small soft shadow while they're about to hit
 const oppAimShadow = (() => {
-  const m = new THREE.Mesh(new THREE.CircleGeometry(0.55, 32), new THREE.MeshBasicMaterial({
+  const m = new THREE.Mesh(new THREE.CircleGeometry(0.75, 40), new THREE.MeshBasicMaterial({
     map: glowTexture(), color: 0xff3b30, transparent: true, opacity: 0, depthWrite: false,   // their colour (red, same as their side)
   }));
   m.rotation.x = -Math.PI / 2;
   m.position.y = 0.016;
   m.visible = false;
+  // thin pulsing ring so it reads at a glance
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.7, 48), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3b30).multiplyScalar(1.4), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+  ring.position.z = 0.002;
+  m.add(ring);
+  m.userData.ring = ring;
   scene.add(m);
   return m;
 })();
 function updateOppAim(dt) {
   const t = them && them.aim;
-  const theirTurn = !!them && playing && mode !== 'solo' && (
-    (ballLive && match.phase === 'rally' && P.sideOfX(ball.x) === them.side) ||
-    ((match.phase === 'serve-wait' || match.phase === 'serve-toss') && match.server === them.side));
-  const target = t && theirTurn ? 0.42 : 0;
+  const theirTurn = !!them && playing && mode !== 'solo';   // their aim is always visible
+  const target = t && theirTurn ? 0.75 : 0;
   const m = oppAimShadow.material;
   m.opacity += (target - m.opacity) * Math.min(1, dt * 6);
   oppAimShadow.visible = m.opacity > 0.01;
+  const ring = oppAimShadow.userData.ring;
+  ring.material.opacity = m.opacity * 1.1;
+  ring.scale.setScalar(1 + Math.sin(performance.now() / 220) * 0.06);
   if (t) {
     if (!oppAimShadow.visible || m.opacity < 0.02) oppAimShadow.position.set(t.x, 0.016, t.z);
     else { oppAimShadow.position.x += (t.x - oppAimShadow.position.x) * Math.min(1, dt * 8); oppAimShadow.position.z += (t.z - oppAimShadow.position.z) * Math.min(1, dt * 8); }
