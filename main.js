@@ -1331,12 +1331,12 @@ function updateSideGlow(dt) {
   const side = show ? P.sideOfX(ball.x) : null;
   for (const k of ['left', 'right']) { sideGlow[k].wash.material.opacity = 0; sideGlow[k].lineMat.opacity = 0; }
   ballHalo.material.opacity = 0;
-  // the ball itself takes a tint of the team colour of the half it's over (nothing else changes colour)
-  ballTint.set(0xffffff);
-  if (side) ballTint.lerp(_tc.set(teamColor(side)), 0.55);
-  ballMesh.material.color.lerp(ballTint, Math.min(1, dt * 10));
-  // HUD chip
-  const chip = document.getElementById('side-chip');
+  // the ball is BLUE on your side and RED on theirs (nothing else changes colour)
+  if (side) ballTint.set(side === me.side ? 0x3d8bff : 0xff3b30); else ballTint.set(0xffffff);
+  ballMesh.material.color.lerp(ballTint, Math.min(1, dt * 14));
+  ballMesh.material.emissive.lerp(_tc.copy(side ? ballTint : _tc.set(0x6a4200)).multiplyScalar(side ? 0.35 : 1), Math.min(1, dt * 14));
+  ballXray.material.color.copy(ballMesh.material.color).multiplyScalar(1.2);
+  const chip = null;   // (the YOUR / THEIR BALL chip was removed — the ball colour says it)
   if (chip) {
     if (!side) chip.classList.add('hidden');
     else {
@@ -1593,7 +1593,7 @@ function onActionKey(code) {
   if (code === 'ArrowRight') aimStep(0, 1);
   if (code === 'KeyJ') jQ = true;      // serve flow, or start charging a set
   if (code === 'KeyK') kQ = true;      // start charging a kick
-  if (code === 'KeyL') lQ = true;      // L: block at the net · dig a smash anywhere else
+  if (code === 'KeyL') lQ = true;      // active block at the net
   if (code === 'KeyF') fQ = true;
   if (code === 'KeyM') setLanding(!showLanding);
 }
@@ -1743,36 +1743,11 @@ let blockCd = 0, blockPress = -1e9, pendingCross = null, hitStop = 0;
 const smashWarn = { on: false, inPos: false, announced: false };
 
 /* ---------------- BULLET TIME: power attacks (spike / smash / ultimate) slow the ball, not the players ---------------- */
-const BT_SCALE = 0.35;                    // ball runs at 35% while an attack is in the air
+const BT_SCALE = 1;                       // (bullet time removed — attacks play at normal speed)
 let btScale = 1, btWas = false, btRingT = 0, btDroneStop = null;
 const btActive = () => ballLive && match.phase === 'rally' && isAttack(match.lastPart);
 const toReal = (tau) => tau / (BALL_TIME * Math.max(0.05, btScale));   // ball-time → real seconds right now
-function updateBulletTime(dt) {
-  const on = btActive();
-  btScale += ((on ? BT_SCALE : 1) - btScale) * Math.min(1, dt * (on ? 12 : 6));
-  if (on && !btWas) {
-    sfx.btIn();
-    if (btDroneStop) btDroneStop();
-    btDroneStop = sfx.btDrone();
-    if (smashIncoming()) showBanner('SMASH!', 'run to the red mark · L on green to dig', 'var(--orange)');
-    shake(0.5);
-  }
-  if (!on && btWas) { if (btDroneStop) btDroneStop(); btDroneStop = null; sfx.btOut(); }
-  btWas = on;
-  if (!on || !ballLive) return;
-  // the ball looks unstoppable: energy streaks, afterglow, shockwaves along its path, rumble
-  const fire = match.lastPart === 'ult';
-  const pal = fire ? PAL.fire : [0xff3b2f, 0xffffff, 0xffb36b, 0x9fe0ff];
-  fx.emit(ball.x, ball.y, ball.z, { n: 7, color: pal, bright: 2.4, speed: 1.2, up: 0.4, life: 0.6, size: 0.18, g: 0 });
-  fx.emit(ball.x, ball.y, ball.z, { n: 3, color: [0xffffff], bright: 2.8, speed: 3.5, up: 0.2, life: 0.25, size: 0.06, g: 0 });
-  btRingT -= dt;
-  if (btRingT <= 0) {
-    btRingT = 0.14;
-    fx.ring(ball.x, ball.z, { color: fire ? 0xff7a1a : 0xff3b2f, r: 1.6, life: 0.5, bright: 1.6 });
-    fx.flash(ball.x, ball.y, ball.z, { color: fire ? 0xff7a1a : 0xffd0c0, size: 1.6, life: 0.2 });
-  }
-  trauma = Math.max(trauma, 0.12);
-}
+function updateBulletTime() { btScale = 1; }   // slow-motion effect removed
 
 // their attack is in the air, heading for my court
 const smashIncoming = () => !!me && ballLive && match.phase === 'rally' && isAttack(match.lastPart) && !!match.last && match.last !== me.side;
@@ -1793,17 +1768,11 @@ function digSpot() {
 
 // ball-time until the ball drops through height h (or ends)
 function timeToDrop(h) {
-  // exact (interpolated) crossing time — under bullet time each sim step is ~40 ms of real time,
-  // so a stepped answer would make the dig needle jump right over the green
-  if (ball.vy < 0 && ball.y <= h) return -(h - ball.y) / Math.max(0.5, -ball.vy);   // already below: negative = time since
   const b = P.copyBall(ball);
-  const dt = P.STEP * 2;
   for (let t = 0; t < 2.5;) {
-    const py = b.y;
-    t += dt;
-    const end = P.step(b, dt, null);
-    if (b.vy < 0 && b.y <= h) return t - dt * ((h - b.y) / Math.max(1e-6, py - b.y));
-    if (end) return t;
+    t += P.STEP * 2;
+    const end = P.step(b, P.STEP * 2, null);
+    if ((b.vy < 0 && b.y <= h) || end) return t;
   }
   return Infinity;
 }
@@ -1849,8 +1818,8 @@ function updateDigMeter() {
   const r = toReal(timeToDrop(0.9));
   if (!approach || !approach.dig) {
     if (r > APPROACH_R) { el.classList.remove('charging'); return; }
-    approach = { p: 1.8, needle: 0, dead: false, lastSeen: 0, dig: true };
-    setMeterZones(DIG_GREEN, DIG_YELLOW);
+    approach = { p: 1, needle: 0, dead: false, lastSeen: 0, dig: true };
+    setMeterZones();
     sfx.cue();
   }
   if (approach.dead) { el.classList.remove('charging'); me.charging = null; return; }
@@ -1859,11 +1828,11 @@ function updateDigMeter() {
   if (approach.needle >= 1) { approach.dead = true; el.classList.remove('charging'); return; }   // never pressed: it lands
   el.classList.add('charging');
   me.charging = 'K';
-  const inGreen = Math.abs(approach.needle - G_CENTER) <= DIG_GREEN;
+  const inGreen = Math.abs(approach.needle - G_CENTER) <= GREEN_HALF;
   $('tmf-marker').style.opacity = '1';
   $('tmf-marker').style.left = `${approach.needle * 100}%`;
   $('tmf-fill').style.width = `${approach.needle * 100}%`;
-  $('tmf-label').textContent = inGreen ? 'DIG! (L)' : 'L ON GREEN';
+  $('tmf-label').textContent = inGreen ? 'DIG!' : 'GREEN ONLY';
   $('tmf-label').className = 'tmf-label ' + (inGreen ? 'perfect' : 'charge');
   $('tmf-part').textContent = '';
   floatT = 0.3;
@@ -1875,7 +1844,7 @@ function tapDig(kind) {
   const e = approach.needle - G_CENTER;
   approach.dead = true;
   me.charging = null;
-  if (Math.abs(e) > DIG_GREEN) {
+  if (Math.abs(e) > GREEN_HALF) {
     me.action = { part: 'shank', t: 0 };
     showTiming(e, e < 0 ? 'EARLY' : 'LATE', null, 'missed the dig');
     sfx.miss();
@@ -1896,7 +1865,7 @@ function doDig() {
     x: from.x + THREE.MathUtils.clamp(-s * 3.8 - from.x, -0.6, 0.6),   // drift a touch toward the middle of your half
     z: from.z + THREE.MathUtils.clamp(-from.z, -0.5, 0.5),
   };
-  setBall(P.solveApex(from, tg, 7.5, false));
+  setBall(P.solveApex(from, tg, 6.7, false));
   match.lastPart = 'dig';
   if (match.poss !== me.side) { match.poss = me.side; match.cnt = 0; }
   match.cnt++;
@@ -2090,7 +2059,7 @@ function tapSwing(kind) {
   if (match.phase === 'serve-toss' && match.server === me.side) kind = 'K';   // serve is J, J (K works too)
   if (!ballIncoming()) return;                                   // ball not in play / not coming at you: nothing happens
   sfx.swing();
-  if (smashIncoming()) { showTiming(null, 'DIG WITH L', null, 'J / K can\'t dig a smash'); sfx.miss(); return; }
+  if (smashIncoming()) { tapDig(kind); return; }
   if (!approach || approach.dead || !ballIncoming()) { whiff(kind); return; }
   const c = findContact(me, prefFor(kind), true, 1.2);
   if (c.d > REACH) { whiff(kind); return; }
@@ -2600,11 +2569,7 @@ function updateBall(dt) {
     else tapSwing('J');
   }
   if (kQ) { kQ = false; tapSwing('K'); }
-  if (lQ) {
-    lQ = false;
-    if (Math.abs(me.pos.x) <= BLOCK_X) tryBlock();          // at the net: block
-    else if (smashIncoming()) tapDig('L');                   // anywhere else, vs a smash: dig
-  }
+  if (lQ) { lQ = false; tryBlock(); }
   if (fQ) { fQ = false; if (mode === 'solo' && (match.phase === 'idle' || match.phase === 'serve-wait')) feedBall(); }
 
   updateBulletTime(dt);
@@ -2880,7 +2845,7 @@ function updateHint() {
   if (!me) return;
   let h = '';
   const atNet = Math.abs(me.pos.x) <= BLOCK_X + 0.3;
-  if (smashWarn.on) h = smashWarn.inPos ? 'In position  ·  L on GREEN to dig' : atNet && !smashIncoming() ? 'L  block as it crosses  ·  or get to the red mark' : 'Smash incoming  ·  get to the red mark';
+  if (smashWarn.on) h = smashWarn.inPos ? 'In position  ·  J on GREEN to dig' : atNet && !smashIncoming() ? 'L  block as it crosses  ·  or get to the red mark' : 'Smash incoming  ·  get to the red mark';
   else if (match.phase === 'idle') h = 'J  serve      F  ball feed';
   else if (match.phase === 'wait') h = 'Waiting for the host…';
   else if (match.phase === 'serve-wait') h = match.server === me.side ? `J  toss, then J on green      arrows  aim (${AIM_NAMES[aimCell.row][aimCell.col]})` : `${sideName(match.server)} to serve`;
@@ -2966,7 +2931,7 @@ function updateCamera() {
   }
   // tighter focus while the ball is live
   const live = ballLive ? 1 : 0;
-  const bt = 1 - (btScale - BT_SCALE) / (1 - BT_SCALE);     // 0 normal … 1 full bullet time
+  const bt = 0;
   focusPass.uniforms.uStrength.value += ((live ? 0.55 : 0.4) + bt * 0.08 - focusPass.uniforms.uStrength.value) * 0.08;
   focusPass.uniforms.uDesat.value += ((live ? 0.65 : 0.4) + bt * 0.06 - focusPass.uniforms.uDesat.value) * 0.08;
   focusPass.uniforms.uTint.value.set(1, 1, 1);

@@ -33,7 +33,7 @@ def keyboard():
         (BLUE, 'W A S D', 'move (never aims)'),
         (AIM, '◀ ▶', 'move your aim dot left / right'),
         (AIM, '▲ ▼', 'move it deeper / shorter (combos = diagonal)'),
-        (BLOCK, 'L', 'at the net: BLOCK · anywhere else: DIG a smash (green only)'),
+        (BLOCK, 'L', 'block at the net — press as their attack crosses over you'),
         (TEAL, 'SPACE', 'jump — for spikes and blocks'),
         (GOLD, 'J', 'TAP on green to set / control'),
         (ORANGE, 'K', 'TAP on green to kick · in the air = clear / smash / spike'),
@@ -287,10 +287,10 @@ def serving():
     return svg(980, 270, ''.join(o), 'Serve steps')
 
 pages = [
-    ('controls', 'Controls', keyboard(), '<p>WASD moves. When the meter pops up, tap J (set) or K (kick) on green. L is your defence: at the net it blocks their attack as it crosses; anywhere else it digs an incoming smash. The arrow keys are optional aiming. You never pick the body part — the game uses foot, knee, chest or head depending on how high the ball is when you touch it.</p>'),
+    ('controls', 'Controls', keyboard(), '<p>WASD moves. When the meter pops up, tap J (set) or K (kick) on green. At the net, L blocks their attack as it crosses. The arrow keys are optional aiming. You never pick the body part — the game uses foot, knee, chest or head depending on how high the ball is when you touch it.</p>'),
     ('court', 'The court', court(), '<p>Official ISTAF court. You stay on your half; the LED boards are the outer wall. The glow ring at your feet shows where you are: <b class="c-team">team colour</b> in court, <b class="c-gold">gold</b> in the free zone, <b class="c-blue">blue</b> in your service circle.</p>'),
     ('touches', '3 touches', touches(), '<p>You get <b>up to 3 touches</b> before the ball must go over — and you can take all three yourself. Sending it straight back with K is safe but slow and loopy. J pops the ball up HIGH and out into open space (← → pick the side) — move under it. Passing to yourself (J, J) lets you hit flatter and harder, and a <b>spike</b> (jump near the net, K at the top) is the fastest shot in the game. Hard balls are hard to kick cleanly: <b>control them with J first</b> — a J that digs a smash pops the ball <b>way</b> up. Jump kicks work on any touch: off your own set it’s a <b>spike</b>, straight off their clear it’s a <b>smash</b>, otherwise it’s a high, soft <b>clear</b> they can easily return.</p>'),
-    ('defend', 'Defending', '', '<p><b>Power attacks go into slow motion.</b> When they spike, smash or Ultimate, the ball drops to quarter speed — you still move at full speed. A <b>red mark</b> shows where it will land: run into it (it turns green) and a <b>DIG meter</b> appears. It is hard: the green is narrow and the needle always accelerates. Tap <b>L</b> on green and the ball pops straight up over you as your first touch — play on. Miss it and it is their point.</p><p>At the net you can <b>block</b> instead: jump and tap <b>L</b> as their attack crosses over you. A perfect block stuffs it straight back down. Everyone sees <b>BLOCKED!</b>.</p><p>J and K can’t dig a smash — only L.</p>'),
+    ('defend', 'Defending', '', '<p>When they spike or smash, a <b>red mark</b> shows where it will land. Get into it (it turns green) and a dig meter appears — tap <b>J or K</b> on <b>green only</b> and the ball pops straight up over you like a set; anything else is their point.</p><p>At the net you can <b>block</b> instead: jump and tap <b>L</b> as their attack crosses over you. A perfect block stuffs it straight back down. Everyone sees <b>BLOCKED!</b>.</p>'),
     ('reach', 'Reach', reach(), '<p>You can play the ball when it is within about a metre of you. The touch is judged by height: low balls on the inside of the foot give the cleanest control. A <b>spike</b> needs you airborne, close to the net (within ~3 m) and the ball above ~1.7 m.</p>'),
     ('timing', 'Timing', timing(), '<p>As the ball comes into your reach a timing meter pops up above your player by itself — just <b>tap J or K when the needle is in the green</b>. Sometimes the needle accelerates into the green to catch you out. Your grade — Perfect, Good, Early or Late — pops up above your head. If the ball hits you and you didn’t press anything, it bounces off your body and still counts as a touch.</p>'),
     ('aim', 'Aiming', aiming(), ''),
