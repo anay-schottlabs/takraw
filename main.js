@@ -1334,7 +1334,7 @@ const ballTint = new THREE.Color(0xffffff), _tc = new THREE.Color();
 // their aim spot, shown on my court as a small soft shadow while they're about to hit
 const oppAimShadow = (() => {
   const m = new THREE.Mesh(new THREE.CircleGeometry(0.55, 32), new THREE.MeshBasicMaterial({
-    map: glowTexture(), color: 0x000000, transparent: true, opacity: 0, depthWrite: false,
+    map: glowTexture(), color: 0xff3b30, transparent: true, opacity: 0, depthWrite: false,   // their colour (red, same as their side)
   }));
   m.rotation.x = -Math.PI / 2;
   m.position.y = 0.016;
