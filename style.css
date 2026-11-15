@@ -251,3 +251,13 @@ button { font-family: inherit; }
 /* block feedback */
 .tmf-label.no-block, .tmf-label.missed-block, .tmf-label.early-block, .tmf-label.late-block { color: var(--orange); font-size: 20px; }
 .key.block { background: #ff5d73; }
+
+/* spin meter is a hidden mechanic: nothing about it is shown */
+#meter, .sb-meter { display: none !important; }
+
+/* whose ball? */
+.side-chip { font-family: var(--display); font-weight: 800; font-size: 15px; letter-spacing: 3px; padding: 4px 14px;
+  background: var(--sc, #888); color: #0d0d10; border: 1px solid rgba(255,255,255,.5); box-shadow: 0 0 18px var(--sc, #888); }
+.side-chip:not(.mine) { background: rgba(16,16,19,.9); color: var(--sc, #888); border-color: var(--sc, #888); }
+.side-chip.flip { animation: sideflip .35s ease-out; }
+@keyframes sideflip { 0% { transform: scale(1.35); } 100% { transform: scale(1); } }

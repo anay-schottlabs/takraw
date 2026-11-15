@@ -213,6 +213,44 @@ export const sfx = {
   },
   groan() { noise({ dur: 1.0, type: 'lowpass', f: 480, gain: 0.2, attack: 0.1 }); tone({ f: 240, f2: 150, dur: 0.7, gain: 0.04, delay: 0.05, vib: 6, vibRate: 5 }); },
   ui() { tone({ f: 1400, dur: 0.03, gain: 0.05 }); },
+  // bullet time: everything drops into slow motion
+  btIn() {
+    tone({ f: 420, f2: 60, dur: 0.7, gain: 0.35, type: 'sawtooth' });
+    tone({ f: 90, f2: 32, dur: 0.9, gain: 0.7 });
+    noise({ dur: 0.8, f: 2400, f2: 300, q: 0.8, gain: 0.25, attack: 0.02 });
+    [0, 0.42].forEach((d) => tone({ f: 60, f2: 40, dur: 0.16, gain: 0.5, delay: 0.25 + d }));   // heartbeat
+  },
+  btOut() { noise({ dur: 0.35, f: 300, f2: 3000, q: 0.9, gain: 0.2, attack: 0.03 }); tone({ f: 80, f2: 200, dur: 0.3, gain: 0.2 }); },
+  // low rumble while the attack hangs in the air; returns stop() (also self-stops after 6 s)
+  btDrone() {
+    if (!ensure()) return () => {};
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator(), o2 = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = 48; o2.type = 'sawtooth'; o2.frequency.value = 72;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 260;
+    const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = 1.6; lg.gain.value = 0.05;
+    lfo.connect(lg); lg.connect(g.gain);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.14, t + 0.2);
+    o.connect(lp); o2.connect(lp); lp.connect(g); g.connect(out(0));
+    o.start(t); o2.start(t); lfo.start(t);
+    const hard = t + 6; o.stop(hard); o2.stop(hard); lfo.stop(hard);
+    let done = false;
+    return () => {
+      if (done) return; done = true;
+      const n = ctx.currentTime;
+      g.gain.cancelScheduledValues(n); g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), n); g.gain.exponentialRampToValueAtTime(0.0001, n + 0.15);
+      try { o.stop(n + 0.2); o2.stop(n + 0.2); lfo.stop(n + 0.2); } catch {}
+    };
+  },
+  // BLOCKED: huge impact, net twang, crowd "ooh"
+  blocked(stuffed = true, pan = 0) {
+    tone({ f: 140, f2: 30, dur: 0.6, gain: 1.0, pan });
+    tone({ f: 60, f2: 25, dur: 0.8, gain: 0.7, pan });
+    noise({ dur: 0.12, type: 'highpass', f: 1800, gain: 0.8, pan });
+    tone({ f: 330, f2: 300, dur: 0.5, type: 'triangle', gain: 0.14, vib: 30, vibRate: 22, pan });   // net twang
+    noise({ dur: 1.3, f: 700, q: 0.6, gain: stuffed ? 0.3 : 0.2, attack: 0.12, delay: 0.08 });       // crowd ooh
+    tone({ f: 260, f2: 200, dur: 0.9, gain: 0.05, delay: 0.1, vib: 8, vibRate: 5 });
+  },
   whoosh(pan = 0) { noise({ dur: 0.3, f: 500, f2: 2600, q: 1.1, gain: 0.16, attack: 0.05, pan }); },
   aim() { tone({ f: 880, dur: 0.04, gain: 0.05, type: 'triangle' }); },
   meterReady() { [660, 880, 1320].forEach((f, i) => tone({ f, dur: 0.18, gain: 0.08, delay: i * 0.06, type: 'triangle' })); },
