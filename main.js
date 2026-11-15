@@ -1690,11 +1690,11 @@ let setFlip = 1;
 function setTarget(p, isSet) {
   const s = sideSign(p.side);
   let dir;
-  if (Math.abs(p.pos.z) > 1.3) dir = -Math.sign(p.pos.z);
+  if (Math.abs(p.pos.z) > 1.0) dir = -Math.sign(p.pos.z);
   else dir = (setFlip = -setFlip);
-  let x = isSet ? -s * 1.4 : p.pos.x + s * 2.0;
+  let x = isSet ? -s * 1.4 : p.pos.x + s * 2.6;   // control lands further from you — make them run
   x = s > 0 ? THREE.MathUtils.clamp(x, -(F.hl - 0.6), -1.0) : THREE.MathUtils.clamp(x, 1.0, F.hl - 0.6);
-  const z = THREE.MathUtils.clamp(p.pos.z + dir * (isSet ? 1.0 : 1.6), -(F.hw - 0.4), F.hw - 0.4);
+  const z = THREE.MathUtils.clamp(p.pos.z + dir * (isSet ? 1.6 : 2.4), -(F.hw - 0.4), F.hw - 0.4);
   return { x, z };
 }
 const bodyPart = (hr) => (hr < 0.95 ? 'foot' : hr < 1.25 ? 'knee' : hr < 1.6 ? 'chest' : 'head');
