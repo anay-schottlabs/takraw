@@ -4006,6 +4006,17 @@ $('howto-close').onclick = () => toggleHelp(false);
 $('opt-landing').checked = showLanding;
 $('opt-quality').value = qualityPref;
 $('opt-quality').onchange = (e) => setQualityPref(e.target.value);
+// bottom controls bar: hidden by default, toggled from the help menu
+let showControls = false;
+try { showControls = localStorage.getItem('takraw-controls') === '1'; } catch {}
+function setControlsBar(on) {
+  showControls = !!on;
+  try { localStorage.setItem('takraw-controls', on ? '1' : '0'); } catch {}
+  document.querySelector('.controls-bar').classList.toggle('hidden', !showControls);
+  $('opt-controls').checked = showControls;
+}
+setControlsBar(showControls);
+$('opt-controls').onchange = (e) => setControlsBar(e.target.checked);
 $('opt-sound').checked = !sfx.muted;
 $('opt-sound').onchange = (e) => setMuted(!e.target.checked);
 // buttons never keep keyboard focus (Space would re-click them mid-game)

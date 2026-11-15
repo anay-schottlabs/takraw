@@ -350,6 +350,7 @@ html = f'''<div id="howto" class="hidden">
         <h2>How to play</h2>
         <label class="ht-opt">Graphics <select id="opt-quality" class="ht-select"><option value="auto">Auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select> <span id="quality-now" class="ht-dim"></span></label>
         <label class="ht-opt"><input type="checkbox" id="opt-sound" /> Sound <span class="key sm">N</span></label>
+        <label class="ht-opt"><input type="checkbox" id="opt-controls" /> Controls bar</label>
         <input type="checkbox" id="opt-landing" hidden />
         <button id="howto-close" class="sq-btn" title="Close (Esc)">&#10005;</button>
       </div>
