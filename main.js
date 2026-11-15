@@ -1346,8 +1346,14 @@ function updateSideGlow(dt) {
   // ball keeps its normal look; a thin outline is BLUE on your side and RED on theirs
   ballMesh.material.color.set(0xffffff);
   ballMesh.material.emissive.set(0x6a4200);
-  ballOutline.visible = !!side;
-  if (side) ballOutline.material.color.set(side === me.side ? 0x3d8bff : 0xff3b30).multiplyScalar(1.4);
+  // outline foreshadows where it will LAND: your colour = your court, their colour = theirs, white = out
+  let oc = null;
+  if (ballLive && landingCache) {
+    const out = landingCache.type === 'board' || !P.inCourt(landingCache.x, landingCache.z);
+    oc = out ? 0xffffff : P.sideOfX(landingCache.x) === me.side ? 0x3d8bff : 0xff3b30;
+  } else if (side) oc = side === me.side ? 0x3d8bff : 0xff3b30;   // held for the serve, etc.
+  ballOutline.visible = oc !== null;
+  if (oc !== null) ballOutline.material.color.set(oc).multiplyScalar(oc === 0xffffff ? 1.6 : 1.4);
   const chip = null;   // (the YOUR / THEIR BALL chip was removed — the ball colour says it)
   if (chip) {
     if (!side) chip.classList.add('hidden');
@@ -3299,7 +3305,8 @@ window.__takraw = { get me() { return me; }, get them() { return them; }, F, bal
   // test helpers: an incoming smash from the other side, and the block effects
   debugSmash: (tx, tz, v = 16) => { const sOpp = -sideSign(me.side); setBall(P.solveSpeed({ x: sOpp * 1.2, y: 2.9, z: 0 }, { x: tx, z: tz }, v)); ballLive = true;
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
-  debugBlock: (stuffed = true) => blockedJuice({ x: 0, y: 1.7, z: 0.4 }, stuffed), gfx: { renderer, composer, bloom, focusPass, key, scene, THREE } };
+  debugBlock: (stuffed = true) => blockedJuice({ x: 0, y: 1.7, z: 0.4 }, stuffed),
+  outline: () => (ballOutline.visible ? '#' + ballOutline.material.color.getHexString() : null), gfx: { renderer, composer, bloom, focusPass, key, scene, THREE } };
 
 /* =====================================================================
    Loop
