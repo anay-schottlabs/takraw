@@ -1335,39 +1335,92 @@ function teamColor(side) {
 }
 let lastBallSide = null;
 const ballTint = new THREE.Color(0xffffff), _tc = new THREE.Color();
-// their aim spot, shown on my court as a small soft shadow while they're about to hit
+// THEIR AIM: a red X on my court — only while the ball is theirs to play (gone the moment they hit it)
 const oppAimShadow = (() => {
-  const m = new THREE.Mesh(new THREE.CircleGeometry(0.58, 40), new THREE.MeshBasicMaterial({
-    map: glowTexture(), color: 0xff3b30, transparent: true, opacity: 0, depthWrite: false,   // their colour (red, same as their side)
-  }));
-  m.rotation.x = -Math.PI / 2;
-  m.position.y = 0.016;
-  m.visible = false;
-  // thin pulsing ring so it reads at a glance
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.48, 0.54, 48), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3b30).multiplyScalar(1.4), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
-  ring.position.z = 0.002;
-  m.add(ring);
-  m.userData.ring = ring;
-  scene.add(m);
-  return m;
+  const g = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3b30).multiplyScalar(1.4), transparent: true, opacity: 0, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
+  for (const a of [Math.PI / 4, -Math.PI / 4]) {
+    const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.09), mat);
+    bar.rotation.x = -Math.PI / 2; bar.rotation.z = a; bar.renderOrder = 19;
+    g.add(bar);
+  }
+  g.position.y = 0.02;
+  g.visible = false;
+  g.userData.mat = mat;
+  scene.add(g);
+  return g;
 })();
 function updateOppAim(dt) {
-  // while their shot (or a practice feed) is in the air: where it will actually land; otherwise their aim spot
-  const theirShot = !!me && playing && ballLive && match.phase === 'rally' && match.last && match.last !== me.side && landingCache;
-  const t = theirShot ? landingCache : them && them.aim;
-  const theirTurn = theirShot || (!!them && playing && mode !== 'solo');   // their aim is always visible
-  const target = t && theirTurn ? 0.75 : 0;
-  const m = oppAimShadow.material;
-  m.opacity += (target - m.opacity) * Math.min(1, dt * 6);
-  oppAimShadow.visible = m.opacity > 0.01;
-  const ring = oppAimShadow.userData.ring;
-  ring.material.opacity = m.opacity * 1.1;
-  ring.scale.setScalar(1 + Math.sin(performance.now() / 220) * 0.06);
+  const t = them && them.aim;
+  const theirTurn = !!me && !!them && playing && mode !== 'solo' && (
+    ((match.phase === 'serve-wait' || match.phase === 'serve-toss') && match.server === them.side) ||
+    (ballLive && match.phase === 'rally' && P.sideOfX(ball.x) === them.side &&
+      !(landingCache && P.sideOfX(landingCache.x) === me.side)));         // once it's heading to me, the drop zone takes over
+  const mat = oppAimShadow.userData.mat;
+  mat.opacity += ((t && theirTurn ? 0.95 : 0) - mat.opacity) * Math.min(1, dt * 10);
+  oppAimShadow.visible = mat.opacity > 0.02;
   if (t) {
-    if (!oppAimShadow.visible || m.opacity < 0.02) oppAimShadow.position.set(t.x, 0.016, t.z);
-    else { oppAimShadow.position.x += (t.x - oppAimShadow.position.x) * Math.min(1, dt * 8); oppAimShadow.position.z += (t.z - oppAimShadow.position.z) * Math.min(1, dt * 8); }
+    if (mat.opacity < 0.05) oppAimShadow.position.set(t.x, 0.02, t.z);
+    else { oppAimShadow.position.x += (t.x - oppAimShadow.position.x) * Math.min(1, dt * 10); oppAimShadow.position.z += (t.z - oppAimShadow.position.z) * Math.min(1, dt * 10); }
   }
 }
+
+// DROP ZONE: where the ball in the air will land (dashed ring, shrinks as it falls) + a dashed line from the ball.
+// Blue = coming to you · white = lands on their side · grey with an X = going out · dig zone (green when you're in it).
+function dashedRingTexture(withX) {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.strokeStyle = '#fff'; g.lineWidth = 14; g.setLineDash([26, 18]);
+  g.beginPath(); g.arc(128, 128, 112, 0, Math.PI * 2); g.stroke();
+  g.setLineDash([]); g.lineWidth = 12;
+  if (withX) { g.beginPath(); g.moveTo(92, 92); g.lineTo(164, 164); g.moveTo(164, 92); g.lineTo(92, 164); g.stroke(); }
+  else { g.fillStyle = '#fff'; g.beginPath(); g.arc(128, 128, 14, 0, Math.PI * 2); g.fill(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const dropZone = (() => {
+  const texIn = dashedRingTexture(false), texOut = dashedRingTexture(true);
+  const mat = new THREE.MeshBasicMaterial({ map: texIn, transparent: true, depthWrite: false, depthTest: false });
+  const ring = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  ring.rotation.x = -Math.PI / 2; ring.renderOrder = 21; ring.visible = false;
+  scene.add(ring);
+  const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const lineMat = new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.22, gapSize: 0.16, transparent: true, opacity: 0.5, depthTest: false });
+  const line = new THREE.Line(lineGeo, lineMat);
+  line.renderOrder = 21; line.visible = false; line.frustumCulled = false;
+  scene.add(line);
+  return { ring, mat, texIn, texOut, line, lineGeo, lineMat, spin: 0 };
+})();
+function updateDropZone(dt) {
+  const D = dropZone;
+  const show = !!me && playing && ballLive && match.phase === 'rally' && !!landingCache;
+  D.ring.visible = D.line.visible = show;
+  if (!show) return;
+  const Lc = landingCache;
+  const out = Lc.type === 'board' || !P.inCourt(Lc.x, Lc.z);
+  const mine = !out && P.sideOfX(Lc.x) === me.side;
+  const dig = smashWarn.on && smashIncoming();
+  let col, r, a;
+  if (dig) { col = smashWarn.inPos ? 0x4fdc86 : 0x3d8bff; r = RX_R; a = 1; }
+  else if (mine) { col = 0x3d8bff; a = 1; }
+  else if (out) { col = 0xa0a0a8; a = 0.75; }
+  else { col = 0xffffff; a = 0.6; }
+  if (!dig) r = 0.3 + THREE.MathUtils.clamp(ball.y / 6, 0, 1) * 0.8;      // closes in as the ball comes down
+  D.mat.map = out && !dig ? D.texOut : D.texIn;
+  D.mat.color.set(col).multiplyScalar(mine || dig ? 1.5 : 1.2);
+  D.mat.opacity = a;
+  D.spin += dt * (dig ? 1.6 : 0.6);
+  D.ring.position.set(Lc.x, 0.022, Lc.z);
+  D.ring.rotation.z = D.spin;
+  D.ring.scale.set(r * 2, r * 2, 1);
+  if (dig) D.ring.scale.multiplyScalar(1 + Math.sin(performance.now() / 70) * 0.04);
+  const p = D.lineGeo.attributes.position;
+  p.setXYZ(0, ball.x, Math.max(ball.y, 0.05), ball.z); p.setXYZ(1, Lc.x, 0.03, Lc.z);
+  p.needsUpdate = true;
+  D.line.computeLineDistances();
+  D.lineMat.color.copy(D.mat.color);
+  D.lineMat.opacity = mine || dig ? 0.6 : 0.35;
+}
+
 function updateSideGlow(dt) {
   const show = !!me && playing && (ballLive || match.phase === 'serve-wait' || match.phase === 'serve-toss');
   const side = show ? P.sideOfX(ball.x) : null;
@@ -1696,10 +1749,15 @@ function aimTarget(p) {
 // the dot + (briefly) all nine spots, drawn on their side only on your screen
 const aimDot = (() => {
   const g = new THREE.Group();
-  const dot = new THREE.Mesh(new THREE.CircleGeometry(0.12, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff).multiplyScalar(1.6), transparent: true, depthWrite: false }));
-  const ring = flatRing(0.22, 0.28, new THREE.Color(0xffd34d).multiplyScalar(1.6), 0.95);
-  dot.rotation.x = -Math.PI / 2;
-  g.add(dot, ring);
+  // YOUR AIM: a small blue diamond on their court (it only ever shows your aim)
+  const dia = (r, a) => { const sh = new THREE.Shape(); sh.moveTo(0, r); sh.lineTo(r, 0); sh.lineTo(0, -r); sh.lineTo(-r, 0); sh.closePath();
+    const m = new THREE.Mesh(new THREE.ShapeGeometry(sh), new THREE.MeshBasicMaterial({ color: new THREE.Color(0x3d8bff).multiplyScalar(a), transparent: true, depthWrite: false, depthTest: false }));
+    m.rotation.x = -Math.PI / 2; m.renderOrder = 19; return m; };
+  const ring = dia(0.26, 1.0);                 // outline (back)
+  ring.material.opacity = 0.55;
+  const dot = dia(0.16, 1.5);                  // fill (front)
+  dot.position.y = 0.001;
+  g.add(ring, dot);
   g.position.y = 0.018;
   const spots = [];
   for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
@@ -1718,8 +1776,7 @@ function updateAim(dt) {
   for (const sp of aimDot.spots) sp.m.visible = show && aimFlash > 0;
   if (!show) return;
   const s = sideSign(me.side);
-  const myShot = ballLive && match.phase === 'rally' && match.last === me.side && landingCache;
-  const t = myShot ? landingCache : aimTarget(me);                  // in flight: where it will actually go
+  const t = aimTarget(me);                                          // only ever your aim (landings use the drop zone)
   const k = Math.min(1, dt * 10);
   aimDot.g.position.x += (t.x - aimDot.g.position.x) * k;
   aimDot.g.position.z += (t.z - aimDot.g.position.z) * k;
@@ -1855,7 +1912,7 @@ function updateSmashMark() {
   if (live) spot = digSpot();
   else if (them && them.tele && ballLive && match.phase === 'rally') spot = them.tele;   // they're jumping into it
   smashWarn.on = !!spot && playing;
-  smashMark.g.visible = smashWarn.on;
+  smashMark.g.visible = false;                // (the drop zone shows the dig zone now)
   if (!smashWarn.on) { smashWarn.announced = false; return; }
   smashWarn.inPos = Math.hypot(me.pos.x - spot.x, me.pos.z - spot.z) <= RX_R;
   smashMark.g.position.set(spot.x, 0.02, spot.z);
@@ -2709,7 +2766,7 @@ function renderBall(dt) {
       const tReal = toReal(c.tau);
       const k = THREE.MathUtils.clamp(tReal / 0.7, 0, 1);
       const sz = BALL_VR * 2.4 * (1 + 2.2 * k);
-      timingRing.visible = true;
+      timingRing.visible = false;               // (retired — the meter above your head handles timing)
       timingRing.position.set(ball.x, Math.max(ball.y, BALL_VR), ball.z);
       timingRing.scale.setScalar(sz);
       const inWin = c.tau <= PERFECT;
@@ -2724,6 +2781,7 @@ function renderBall(dt) {
   fx.update(dt);
   updateSideGlow(dt);
   updateOppAim(dt);
+  updateDropZone(dt);
   updateBlockFx(dt);
   updateApproach();
   updateFloatTiming();
@@ -3606,7 +3664,8 @@ window.__takraw = { get me() { return me; }, get them() { return them; }, F, bal
   debugBlock: (stuffed = true) => blockedJuice({ x: 0, y: 1.7, z: 0.4 }, stuffed),
   outline: () => (ballOutline.visible ? '#' + ballOutline.material.color.getHexString() : null),
   myDot: () => ({ x: +aimDot.g.position.x.toFixed(2), z: +aimDot.g.position.z.toFixed(2) }),
-  oppAim: () => ({ visible: oppAimShadow.visible, opacity: +oppAimShadow.material.opacity.toFixed(2), x: +oppAimShadow.position.x.toFixed(2), z: +oppAimShadow.position.z.toFixed(2), sent: them && them.aim }), gfx: { renderer, composer, bloom, focusPass, key, scene, THREE } };
+  oppAim: () => ({ visible: oppAimShadow.visible, x: +oppAimShadow.position.x.toFixed(2), z: +oppAimShadow.position.z.toFixed(2) }),
+  drop: () => ({ visible: dropZone.ring.visible, color: '#' + dropZone.mat.color.getHexString(), r: +(dropZone.ring.scale.x / 2).toFixed(2), x: +dropZone.ring.position.x.toFixed(2), z: +dropZone.ring.position.z.toFixed(2), out: dropZone.mat.map === dropZone.texOut }), gfx: { renderer, composer, bloom, focusPass, key, scene, THREE } };
 
 /* =====================================================================
    Loop

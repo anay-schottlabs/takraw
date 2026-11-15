@@ -258,6 +258,39 @@ def meter():
         o.append(text(mx, my + 86 + i * 24, t, c, 14, 'start', 700))
     return svg(980, 300, ''.join(o), 'Spin meter diagram')
 
+def markers():
+    BLU, RED_, GRN, GRY = '#3d8bff', '#ff3b30', '#4fdc86', '#a0a0a8'
+    o = []
+    def dring(cx, cy, r, col, x=False, op=1):
+        o.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{col}" stroke-width="5" stroke-dasharray="11 8" opacity="{op}"/>')
+        if x: o.append(f'<path d="M{cx-9},{cy-9} L{cx+9},{cy+9} M{cx+9},{cy-9} L{cx-9},{cy+9}" stroke="{col}" stroke-width="4" opacity="{op}"/>')
+        else: o.append(f'<circle cx="{cx}" cy="{cy}" r="5" fill="{col}" opacity="{op}"/>')
+    items = [
+        ('drop', BLU, 'COMING TO YOU', 'where the ball lands — run here'),
+        ('drop', '#ffffff', 'LANDS ON THEIR SIDE', 'your shot, in the air'),
+        ('out', GRY, 'GOING OUT', 'leave it — it lands out'),
+        ('dig', GRN, 'DIG ZONE', 'their attack: stand inside, J on green'),
+        ('x', RED_, 'THEIR AIM', 'only while they are about to hit'),
+        ('dia', BLU, 'YOUR AIM', 'move it with the arrow keys'),
+    ]
+    for i, (kind, col, title, sub) in enumerate(items):
+        cx = 90 + (i % 3) * 300
+        cy = 70 + (i // 3) * 130
+        if kind == 'drop':
+            o.append(f'<circle cx="{cx+45}" cy="{cy-48}" r="9" fill="#f5c02e"/>')
+            o.append(f'<line x1="{cx+45}" y1="{cy-48}" x2="{cx}" y2="{cy}" stroke="{col}" stroke-width="2" stroke-dasharray="6 5" opacity=".7"/>')
+            dring(cx, cy, 24, col, op=1 if col == BLU else .75)
+        elif kind == 'out': dring(cx, cy, 22, col, x=True)
+        elif kind == 'dig': dring(cx, cy, 34, col)
+        elif kind == 'x':
+            o.append(f'<path d="M{cx-16},{cy-16} L{cx+16},{cy+16} M{cx+16},{cy-16} L{cx-16},{cy+16}" stroke="{col}" stroke-width="7" stroke-linecap="round"/>')
+        elif kind == 'dia':
+            o.append(f'<path d="M{cx},{cy-18} L{cx+18},{cy} L{cx},{cy+18} L{cx-18},{cy} Z" fill="{col}"/>')
+        o.append(text(cx + 70, cy - 4, title, CREAM, 15, 'start', 800))
+        o.append(text(cx + 70, cy + 16, sub, MUTED, 12, 'start', 600))
+    o.append(text(490, 258, 'Blue = you / coming to you  ·  Red = your opponent  ·  White = neutral  ·  Grey X = out', GOLD, 13, weight=800))
+    return svg(980, 275, ''.join(o), 'Court markers')
+
 # ---------------- 7. serving ----------------
 def serving():
     o = []
@@ -294,6 +327,7 @@ pages = [
     ('reach', 'Reach', reach(), '<p>You can play the ball when it is within about a metre of you. The touch is judged by height: low balls on the inside of the foot give the cleanest control. A <b>spike</b> needs you airborne, close to the net (within ~3 m) and the ball above ~1.7 m.</p>'),
     ('timing', 'Timing', timing(), '<p>As the ball comes into your reach a timing meter pops up above your player by itself — just <b>tap J or K when the needle is in the green</b>. Sometimes the needle accelerates into the green to catch you out. Your grade — Perfect, Good, Early or Late — pops up above your head. If the ball hits you and you didn’t press anything, it bounces off your body and still counts as a touch.</p>'),
     ('aim', 'Aiming', aiming(), ''),
+    ('markers', 'Markers', markers(), '<p>Every marker means one thing. While a ball is in the air, a <b>dashed ring</b> shows exactly where it will land (with a dashed line from the ball) — it shrinks as the ball comes down. The ball’s outline uses the same colours. Their <b>red X</b> only appears while they are about to hit; your <b>blue diamond</b> is always your own aim.</p>'),
     ('serve', 'Serving', serving(), '<p>When it’s your serve you’re placed in your service circle automatically and held there until you kick. <b>J</b> tosses; as it drops the meter appears — <b>tap J again</b> on green. Arrow keys aim if you want. Serve passes to the other player <b>every 3 points</b>; tossing and not kicking loses the point. In practice, press <b>J</b> any time to go serve.</p>'),
     ('rules', 'Scoring', '', '''<div class="rules">
       <div class="rule"><span class="rb win">+1</span><div><b>Ball lands in their court</b><small>the ball touching the line is IN</small></div></div>
