@@ -1741,7 +1741,7 @@ function onActionKey(code) {
   if (code === 'Escape') { toggleHelp(false); return; }
   if (code === 'KeyN') { setMuted(!sfx.muted); return; }
   if (!playing || helpOpen()) return;
-  if (training && /^(Digit|Numpad)[1-5]$/.test(code)) { setDrill(DRILLS[+code.slice(-1) - 1]); return; }
+  if (training && /^(Digit|Numpad)[1-6]$/.test(code)) { setDrill(DRILLS[+code.slice(-1) - 1]); return; }
   if (code === 'ArrowUp') aimStep(1, 0);
   if (code === 'ArrowDown') aimStep(-1, 0);
   if (code === 'ArrowLeft') aimStep(0, -1);
@@ -1849,8 +1849,19 @@ function setTarget(p, isSet) {
 }
 const bodyPart = (hr) => (hr < 0.95 ? 'foot' : hr < 1.25 ? 'knee' : hr < 1.6 ? 'chest' : 'head');
 // snap: flat and quick · hang: high and floaty
+// FEINT: a soft chip off a spike jump that drops just over the net (green tight & low, yellow deeper & higher, red net or sitter)
+function feintShot(from, side, aimZ, tier) {
+  const s = sideSign(side);
+  const z = THREE.MathUtils.clamp(aimZ, -2.4, 2.4);
+  if (tier === 0) return Math.random() < 0.5
+    ? P.solveApex(from, { x: s * 0.4, z }, Math.max(from.y - 0.2, 1.3), false)                 // dies in the net
+    : P.solveApex(from, { x: s * (2.6 + Math.random()), z: z * 0.5 }, from.y + 1.6, true);     // floats up as a sitter
+  const [ox, oz] = jitter(tier === 2 ? 0.15 : 0.4);
+  const x = s * (tier === 2 ? 1.0 + Math.random() * 0.3 : 1.6 + Math.random() * 0.6) + ox;
+  return P.solveApex(from, { x, z: z + oz }, Math.max(from.y + 0.2, 2.1) + (tier === 2 ? 0 : 0.5), true);
+}
 const serveApex = (part, tier) => (part === 'serve-hang' ? (tier === 2 ? 4.6 : 5.0) : (tier === 2 ? 2.45 : 2.9));
-const PART_NAME = { 'serve-snap': 'Snap serve', 'serve-hang': 'Hang serve', clear: 'Clear', smash: 'Smash', ult: 'ULTIMATE SPIN KICK', bicycle: 'Bicycle kick', dheader: 'Diving header', volley: 'Scissor volley', shank: 'Shank', 'serve-power': 'Power serve', foot: 'Inside foot', knee: 'Knee', chest: 'Chest', head: 'Header', kick: 'Kick', spike: 'Spike', serve: 'Serve', toss: 'Toss', body: 'Body', block: 'Block', stuff: 'Stuff block', dig: 'Dig' };
+const PART_NAME = { dink: 'Feint', 'serve-snap': 'Snap serve', 'serve-hang': 'Hang serve', clear: 'Clear', smash: 'Smash', ult: 'ULTIMATE SPIN KICK', bicycle: 'Bicycle kick', dheader: 'Diving header', volley: 'Scissor volley', shank: 'Shank', 'serve-power': 'Power serve', foot: 'Inside foot', knee: 'Knee', chest: 'Chest', head: 'Header', kick: 'Kick', spike: 'Spike', serve: 'Serve', toss: 'Toss', body: 'Body', block: 'Block', stuff: 'Stuff block', dig: 'Dig' };
 
 function jitter(m) {
   const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * m;
@@ -2189,7 +2200,7 @@ function updateApproach() {
   const el = $('tm-float');
   myTele = null;
   if (smashIncoming()) { updateDigMeter(); return; }   // their attack: the dig meter takes over
-  if (pending && pending.kind === 'K' && pending.aim && attackLikely()) myTele = pending.aim;   // swung, contact a beat away
+  if (pending && (pending.kind === 'K' || pending.feint) && pending.aim && attackLikely()) myTele = pending.aim;   // (a feint keeps the spike tell up)   // swung, contact a beat away
   const live = ballIncoming() && !pending && touchCd <= 0;
   let c = null;
   if (live) c = findContact(me, prefFor('K'), true, 1.2);
@@ -2247,7 +2258,8 @@ function tapSwing(kind) {
   approach.dead = true;
   me.charging = null;
   const aim = kind === 'K' ? aimTarget(me) : null;
-  if (c.tau > 0.012) pending = { kind, at: simTime + c.tau, err: Math.abs(e), early, d: c.d, charge: 1, aim, tier };
+  const feint = kind === 'J' && me.y > 0.12 && attackLikely() && ball.y >= 1.2;
+  if (c.tau > 0.012) pending = { kind, at: simTime + c.tau, err: Math.abs(e), early, d: c.d, charge: 1, aim: feint ? aimTarget(me) : aim, tier, feint };
   else doTouch(kind, Math.abs(e), early, c.d, 1, aim, tier);
 }
 
@@ -2284,7 +2296,10 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
     const t = aimTarget(me);
     return Math.random() < 0.5 ? { x: s * (F.hl + 1.0 + Math.random() * 1.5), z: t.z } : { x: s * (2 + Math.random() * 3), z: (Math.random() < 0.5 ? -1 : 1) * (F.hw + 0.8 + Math.random()) };
   };
-  if (kind === 'J' && emergency) {
+  if (kind === 'J' && air && !isServe && attackLikely() && ball.y >= 1.7) {
+    part = 'dink';                                     // jumped like a spike, tapped J: FEINT
+    shot = feintShot(from, me.side, aimTarget(me).z, tier);
+  } else if (kind === 'J' && emergency) {
     // third touch with J: a desperate, high, less precise ball that goes OVER — never a fourth touch
     part = bodyPart(hr);
     const [ox, oz] = jitter([2.2, 1.4, 0.9][tier]);
@@ -2347,7 +2362,7 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
     }
   }
   // style: how good the kick is decides how flashy it looks
-  if (kind === 'K' && !['spike', 'ult', 'clear', 'smash', 'serve-snap', 'serve-hang'].includes(part)) {
+  if (kind === 'K' && !['spike', 'ult', 'clear', 'smash', 'serve-snap', 'serve-hang', 'dink'].includes(part)) {
     if (tier === 2) part = hr >= 1.55 ? 'dheader' : (hr >= 1.1 || (match.settled && match.poss === me.side)) ? 'bicycle' : 'volley';
     else if (tier === 0) part = 'shank';
   }
@@ -2362,7 +2377,7 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
     match.cnt++;
   }
   match.last = me.side;
-  match.settled = kind === 'J' && tier >= 1 && !emergency;
+  match.settled = kind === 'J' && tier >= 1 && !emergency && part !== 'dink';
   touchCd = 0.25;
   me.facing = kind === 'J' ? (s > 0 ? Math.PI / 2 : -Math.PI / 2) : Math.atan2(shot.vx, shot.vz) || me.facing;
   me.action = { part, t: 0 };
@@ -2454,6 +2469,7 @@ function contactJuice(part, label, at, mine, power = 0) {
   else if (part === 'dheader') { sfx.head(pan); sfx.kick(0.9, pan); }
   else if (part === 'volley' || part === 'serve-power') sfx.kick(1, pan);
   else if (part === 'serve-snap') sfx.serveSnap(pan);
+  else if (part === 'dink') { sfx.dink(pan); fx.emit(at.x, at.y, at.z, { n: 10, color: 0xffffff, speed: 0.8, up: 0.3, life: 0.35, size: 0.06 }); }
   else if (part === 'serve-hang') sfx.serveHang(pan);
   else if (part === 'shank') sfx.body(pan);
   else if (part === 'kick' || part === 'serve' || part === 'foot') sfx.kick(part === 'foot' ? 0.4 : 0.8, pan);
@@ -2899,7 +2915,7 @@ function onRemoteMatch(m) {
 }
 
 /* ---------------- contact poses ---------------- */
-const ACTION_DURS = { 'serve-snap': 0.26, 'serve-hang': 0.6, clear: 0.4, smash: 0.5, ult: 0.85, bicycle: 0.8, dheader: 0.6, volley: 0.5, spike: 0.62, shank: 0.45, 'serve-power': 0.42, block: 0.45, stuff: 0.5 };
+const ACTION_DURS = { dink: 0.45, 'serve-snap': 0.26, 'serve-hang': 0.6, clear: 0.4, smash: 0.5, ult: 0.85, bicycle: 0.8, dheader: 0.6, volley: 0.5, spike: 0.62, shank: 0.45, 'serve-power': 0.42, block: 0.45, stuff: 0.5 };
 // rotate the body around the hips (not the feet) so flips and dives look right
 function hipPivot(p, rx, rz = 0) {
   const h = 0.95;
@@ -2920,6 +2936,11 @@ function actionPose(p, part, e, u = 0) {
     case 'head':
       hipPivot(p, 0.4 * e); break;
     case 'clear':
+    case 'dink':             // looks like a spike take-off, then just a gentle chip with the instep
+      L1.hip.rotation.x = -1.1 * e; L1.hip.rotation.z = 0.5 * e; L1.knee.rotation.x = 0.7 * (1 - e) + 0.2;
+      L0.hip.rotation.x = -0.6 * e; L0.knee.rotation.x = 1.1 * e; hipPivot(p, -0.15 * e);
+      for (const A of p.arms) { A.sh.rotation.z = A.sx * 1.4 * e; A.sh.rotation.x = -0.3 * e; }
+      break;
     case 'serve-snap':       // quick, short flick — barely any wind-up
       L1.hip.rotation.x = -1.2 * e; L1.knee.rotation.x = 0.6 * (1 - e); hipPivot(p, -0.12 * e);
       for (const A of p.arms) A.sh.rotation.z = A.sx * 0.5 * e; break;
@@ -3112,11 +3133,11 @@ function toggleHelp(force) {
    aims away from you, and lets balls that are going out drop.
    ===================================================================== */
 const CPU_LEVELS = {
-  easy:   { react: 0.42, speed: 3.1, perfect: 0.25, good: 0.45, spike: 0.2, dig: 0.3,  readOut: 0.5,  serveDelay: 1.8 },
-  normal: { react: 0.26, speed: 3.7, perfect: 0.45, good: 0.4,  spike: 0.5, dig: 0.55, readOut: 0.85, serveDelay: 1.4 },
-  hard:   { react: 0.14, speed: 4.3, perfect: 0.7,  good: 0.25, spike: 0.8, dig: 0.8,  readOut: 1.0,  serveDelay: 1.1 },
+  easy:   { react: 0.42, speed: 3.1, perfect: 0.25, good: 0.45, spike: 0.2, dig: 0.3,  readOut: 0.5,  serveDelay: 1.8, feint: 0.05 },
+  normal: { react: 0.26, speed: 3.7, perfect: 0.45, good: 0.4,  spike: 0.5, dig: 0.55, readOut: 0.85, serveDelay: 1.4, feint: 0.12 },
+  hard:   { react: 0.14, speed: 4.3, perfect: 0.7,  good: 0.25, spike: 0.8, dig: 0.8,  readOut: 1.0,  serveDelay: 1.1, feint: 0.2 },
   // training bot: perfect every time, gets to everything, never plays a ball that's going out
-  train:  { react: 0.04, speed: 9.0, perfect: 1.0,  good: 0,    spike: 1.0, dig: 1.0,  readOut: 1.0,  serveDelay: 1.0 },
+  train:  { react: 0.04, speed: 9.0, perfect: 1.0,  good: 0,    spike: 1.0, dig: 1.0,  readOut: 1.0,  serveDelay: 1.0, feint: 0 },
 };
 let cpuLevel = 'normal';
 try { cpuLevel = localStorage.getItem('takraw-cpu') || 'normal'; } catch {}
@@ -3124,8 +3145,8 @@ try { cpuLevel = localStorage.getItem('takraw-cpu') || 'normal'; } catch {}
 let training = false;
 let trainDrill = 'mixed';
 try { trainDrill = localStorage.getItem('takraw-drill') || 'mixed'; } catch {}
-const DRILLS = ['mixed', 'smash', 'spike', 'clear', 'kick'];
-const DRILL_NAMES = { mixed: 'Mixed', smash: 'Always smash', spike: 'Set + spike', clear: 'High clear', kick: 'Kick back' };
+const DRILLS = ['mixed', 'smash', 'spike', 'clear', 'kick', 'feint'];
+const DRILL_NAMES = { mixed: 'Mixed', smash: 'Always smash', spike: 'Set + spike', clear: 'High clear', kick: 'Kick back', feint: 'Feint' };
 const cpuMoveNow = () => (training ? trainDrill : 'mixed');
 const cpuL = () => CPU_LEVELS[training ? 'train' : cpuLevel];
 function setDrill(d) {
@@ -3188,7 +3209,10 @@ function cpuShot(p, ai, kind, tier, plan = null) {
   const incoming = firstTouch ? match.lastPart : null;
   const settled = match.poss === p.side && match.settled;
   let part, shot;
-  if (kind === 'DIG') {
+  if (kind === 'DINK') {
+    part = 'dink';
+    shot = feintShot(from, p.side, (ai.cell || cpuPickAim(p, ai)).z, tier);
+  } else if (kind === 'DIG') {
     part = 'dig';
     const tg = { x: from.x + THREE.MathUtils.clamp(-s * 3.8 - from.x, -0.6, 0.6), z: from.z + THREE.MathUtils.clamp(-from.z, -0.5, 0.5) };
     shot = P.solveApex({ x: from.x, y: Math.max(from.y, 0.4), z: from.z }, tg, 6.7, false);
@@ -3236,6 +3260,7 @@ function cpuShot(p, ai, kind, tier, plan = null) {
   }
   match.last = p.side;
   match.settled = (kind === 'J' && tier >= 1) || kind === 'DIG';
+  if (kind === 'DINK') match.settled = false;
   p.facing = kind === 'K' ? Math.atan2(shot.vx, shot.vz) || p.facing : (s > 0 ? Math.PI / 2 : -Math.PI / 2);
   p.action = { part, t: 0 };
   if (kind === 'K') { ai.cell = null; ai.pickAimSoon = true; }
@@ -3318,9 +3343,10 @@ function cpuThink(p, ai, dt) {
       else ai.plan = match.settled && Math.abs(ball.x) < 3.4 ? 'spike' : 'kick';
       if (c === 1 && ai.plan === 'kick' && match.settled && Math.random() < L.spike * 0.6) ai.plan = 'spike';
       const cpuMove = cpuMoveNow();
+      ai.feint = false;
       if (!attack && cpuMove !== 'mixed') {
         if (cpuMove === 'smash' || cpuMove === 'clear') ai.plan = c < 2 && cpuIntercept(p, 2.45) ? cpuMove : (c === 0 ? 'control' : 'kick');
-        else if (cpuMove === 'spike') ai.plan = c === 0 ? 'control' : c === 1 ? 'set' : 'spike';
+        else if (cpuMove === 'spike' || cpuMove === 'feint') ai.plan = c === 0 ? 'control' : c === 1 ? 'set' : 'spike';
         else if (cpuMove === 'kick') ai.plan = 'kick';
       }
     }
@@ -3345,6 +3371,7 @@ function cpuThink(p, ai, dt) {
           const tier = cpuRollTier();
           if (ai.plan === 'dig') { if (ai.digOk) cpuShot(p, ai, 'DIG', 2); }
           else if (ai.plan === 'control' || ai.plan === 'set') cpuShot(p, ai, 'J', tier);
+          else if (ai.plan === 'spike' && (cpuMoveNow() === 'feint' || (cpuMoveNow() === 'mixed' && Math.random() < (L.feint || 0)))) cpuShot(p, ai, 'DINK', tier);
           else cpuShot(p, ai, 'K', tier, ai.plan);
           p.tele = null;
         }

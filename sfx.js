@@ -253,6 +253,10 @@ export const sfx = {
   },
   whoosh(pan = 0) { noise({ dur: 0.3, f: 500, f2: 2600, q: 1.1, gain: 0.16, attack: 0.05, pan }); },
   aim() { tone({ f: 880, dur: 0.04, gain: 0.05, type: 'triangle' }); },
+  dink(pan = 0) {                // FEINT: a soft little "tok" and a hush
+    tone({ f: 520, f2: 300, dur: 0.06, gain: 0.25, type: 'triangle', pan });
+    noise({ dur: 0.18, f: 1200, f2: 600, q: 0.9, gain: 0.07, attack: 0.02, pan });
+  },
   serveSnap(pan = 0) {           // SNAP: crisp high "tsk" + a quick zip
     noise({ dur: 0.04, type: 'highpass', f: 3500, gain: 0.5, pan });
     tone({ f: 420, f2: 160, dur: 0.07, gain: 0.4, pan });
