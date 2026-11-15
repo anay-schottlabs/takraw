@@ -1205,7 +1205,7 @@ function setTarget(p, isSet) {
   return { x, z };
 }
 const bodyPart = (hr) => (hr < 0.95 ? 'foot' : hr < 1.25 ? 'knee' : hr < 1.6 ? 'chest' : 'head');
-const PART_NAME = { ult: 'ULTIMATE SPIN KICK', bicycle: 'Bicycle kick', dheader: 'Diving header', volley: 'Scissor volley', shank: 'Shank', 'serve-power': 'Power serve', foot: 'Inside foot', knee: 'Knee', chest: 'Chest', head: 'Header', kick: 'Kick', spike: 'Spike', serve: 'Serve', toss: 'Toss', body: 'Body', block: 'Block' };
+const PART_NAME = { clear: 'Clear', smash: 'Smash', ult: 'ULTIMATE SPIN KICK', bicycle: 'Bicycle kick', dheader: 'Diving header', volley: 'Scissor volley', shank: 'Shank', 'serve-power': 'Power serve', foot: 'Inside foot', knee: 'Knee', chest: 'Chest', head: 'Header', kick: 'Kick', spike: 'Spike', serve: 'Serve', toss: 'Toss', body: 'Body', block: 'Block' };
 
 function jitter(m) {
   const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * m;
@@ -1378,6 +1378,9 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
   const sub = tier === 1 ? (early ? 'early' : 'late') : '';
 
   if (!isServe && match.poss === me.side && match.cnt >= 3) { endRally(me.side, 'FOUR'); return; }
+  const firstTouch = match.poss !== me.side || match.cnt === 0;           // first touch on your side
+  const incoming = firstTouch ? match.lastPart : null;                   // the shot that came over
+  const hardIncoming = incoming === 'smash' || incoming === 'spike' || incoming === 'ult';
 
   const from = { x: ball.x, y: ball.y, z: ball.z };
   const weak = (1 - chargeAmt);                       // short charge = less power
@@ -1393,12 +1396,30 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
     const dev = [2.3, 0.8, 0.2][tier];
     const [ox, oz] = jitter(dev);
     tg.x += ox; tg.z += oz;
-    const apex = tier === 0 ? 2.6 + Math.random() * 3.0 : (isSet ? 6.2 : 5.3) - (tier === 1 ? 0.5 : 0);
+    let apex = tier === 0 ? 2.8 + Math.random() * 3.0 : (isSet ? 6.7 : 5.8) - (tier === 1 ? 0.5 : 0);
+    if (hardIncoming && tier >= 1) apex = 9.0;                         // digging a smash pops it WAY up
     shot = P.solveApex(from, tg, apex, false);
   } else {
     const tg = aim ? { x: aim.x, z: aim.z } : aimTarget(me);
-    const spike = air && ball.y >= 1.7 && Math.abs(me.pos.x) <= 3.2 && !isServe;
-    if (spike) {
+    const offOwnSet = match.poss === me.side && match.settled;
+    const spike = air && !isServe && offOwnSet && ball.y >= 1.7 && Math.abs(me.pos.x) <= 3.2;
+    const smash = air && !isServe && !spike && firstTouch && incoming === 'clear';
+    const clear = air && !isServe && !spike && !smash;
+    if (clear) {
+      // jump kick that isn't a set-up spike: a high, soft clear to their side — easy for them
+      part = 'clear';
+      const [ox, oz] = jitter([2.0, 1.0, 0.5][tier]);
+      tg.x += ox; tg.z += oz;
+      shot = P.solveApex(from, tg, tier === 0 ? 7.2 : 6.5, true);
+    } else if (smash) {
+      // jump-kicking straight off their clear: a punchy smash (not spike-level)
+      part = 'smash';
+      const [ox, oz] = jitter([2.2, 0.9, 0.35][tier]);
+      tg.x += ox; tg.z += oz;
+      if (tier === 0) shot = P.solveApex(from, tg, 4.0, true);
+      else if (Math.abs(me.pos.x) <= 3.5) shot = P.solveSpeed(from, tg, tier === 2 ? 18 : 14);     // near the net: hit down
+      else shot = P.solveApex(from, tg, Math.max(from.y + 0.35, tier === 2 ? 2.4 : 2.9), true);    // from deep: hard flat drive
+    } else if (spike) {
       part = 'spike';
       if (tier >= 1 && myMeter >= METER_ULT_MIN) {
         // ULTIMATE SPIN KICK: faster and more accurate the fuller your meter
@@ -1426,11 +1447,12 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
     }
   }
   // style: how good the kick is decides how flashy it looks
-  if (kind === 'K' && part !== 'spike' && part !== 'ult' && part !== 'serve') {
+  if (kind === 'K' && !['spike', 'ult', 'serve', 'clear', 'smash'].includes(part)) {
     if (tier === 2) part = hr >= 1.55 ? 'dheader' : (hr >= 1.1 || (match.settled && match.poss === me.side)) ? 'bicycle' : 'volley';
     else if (tier === 0) part = 'shank';
   } else if (part === 'serve' && tier === 2) part = 'serve-power';
   setBall(shot);
+  match.lastPart = part;
   if (part === 'ult') ballFire = true;
   if (kind === 'K') resetAim();     // aim snaps back to the centre after every kick
 
@@ -1464,7 +1486,9 @@ const PAL = {
 };
 function contactJuice(part, label, at, mine, power = 0) {
   const pan = panOf(at.x, at.y, at.z);
-  if (part === 'ult') sfx.ult(pan);
+  if (part === 'clear') sfx.kick(0.5, pan);
+  else if (part === 'smash') { sfx.kick(1, pan); sfx.whoosh(pan); }
+  else if (part === 'ult') sfx.ult(pan);
   else if (part === 'spike' || part === 'bicycle') sfx.spike(1, pan);
   else if (part === 'dheader') { sfx.head(pan); sfx.kick(0.9, pan); }
   else if (part === 'volley' || part === 'serve-power') sfx.kick(1, pan);
@@ -1479,6 +1503,11 @@ function contactJuice(part, label, at, mine, power = 0) {
   const perfect = label === 'PERFECT';
   if (mine) { if (perfect) sfx.perfect(); else if (label === 'GOOD') sfx.good(); }
 
+  if (part === 'clear') {   // no fireworks for a clear
+    fx.emit(at.x, at.y, at.z, { n: 10, color: [0xffffff, 0xdfe8ff], speed: 1.6, up: 1.2, life: 0.45, size: 0.07 });
+    if (mine && perfect) sfx.good();
+    return;
+  }
   // base burst on every contact
   const pal = perfect ? PAL.gold : label === 'EARLY' ? PAL.cool : label === 'LATE' ? PAL.warm : [0xffffff, 0xdfe8ff];
   fx.emit(at.x, at.y, at.z, { n: perfect ? 45 : 22, color: pal, speed: perfect ? 3.4 : 2.4, up: 2, life: 0.7, size: perfect ? 0.12 : 0.08 });
@@ -1496,6 +1525,9 @@ function contactJuice(part, label, at, mine, power = 0) {
     fx.emit(at.x, at.y, at.z, { n: 60, color: [0xffffff, 0xfff0a0], bright: 2.6, speed: 10, up: 0.5, life: 0.4, size: 0.07, g: 0.5 });
     fx.ring(at.x, at.z, { color: 0xff5a1a, r: 3.2, life: 0.6 });
     fx.ring(at.x, at.z, { color: 0xffd34d, r: 2.2, life: 0.45 });
+  } else if (part === 'smash') {
+    shake(0.28);
+    fx.ring(at.x, at.z, { color: 0xffffff, r: 1.3, life: 0.35 });
   } else if (part === 'spike') {
     shake(0.55);
     fx.ring(at.x, at.z, { color: 0xff8a2a, r: 1.9 });
@@ -1539,7 +1571,7 @@ function bodyCheck() {
     match.cnt++;
     sfx.touch(match.cnt);
   }
-  match.last = me.side; match.settled = false;
+  match.last = me.side; match.settled = false; match.lastPart = 'body';
   touchCd = 0.3;
   const part = block ? 'block' : 'body';
   me.action = { part, t: 0 };
@@ -1715,6 +1747,7 @@ function feedBall() {
   setBall(shot);
   ballLive = true;
   match.phase = 'rally'; match.poss = other(me.side); match.cnt = 1; match.last = other(me.side); match.settled = false;
+  match.lastPart = 'clear';   // machine lobs count as clears — practise your smash on them
   cueArmed = true;
   sfx.machine(panOf(shot.x, shot.y, shot.z));
   fx.emit(shot.x, shot.y, shot.z, { n: 10, color: 0xffffff, speed: 1.4, life: 0.4 });
@@ -1832,6 +1865,7 @@ function onRemoteTouch(msg) {
   if (msg.phase === 'serve-toss' || msg.phase === 'rally') match.phase = msg.phase;
   if (msg.part === 'toss') match.server = msg.side;
   match.poss = msg.poss; match.cnt = msg.cnt; match.last = msg.last; match.settled = !!msg.settled;
+  match.lastPart = msg.part;
   if (them) { them.action = { part: msg.part, t: 0 }; if (Number.isFinite(msg.mt)) them.meter = msg.mt; }
   if (msg.part === 'ult') ballFire = true;
   renderMeter();
@@ -1853,7 +1887,7 @@ function onRemoteMatch(m) {
 }
 
 /* ---------------- contact poses ---------------- */
-const ACTION_DURS = { ult: 0.85, bicycle: 0.8, dheader: 0.6, volley: 0.5, spike: 0.62, shank: 0.45, 'serve-power': 0.42 };
+const ACTION_DURS = { clear: 0.4, smash: 0.5, ult: 0.85, bicycle: 0.8, dheader: 0.6, volley: 0.5, spike: 0.62, shank: 0.45, 'serve-power': 0.42 };
 // rotate the body around the hips (not the feet) so flips and dives look right
 function hipPivot(p, rx, rz = 0) {
   const h = 0.95;
@@ -1873,6 +1907,7 @@ function actionPose(p, part, e, u = 0) {
       hipPivot(p, -0.45 * e); for (const A of p.arms) A.sh.rotation.z = A.sx * 1.1 * e; break;
     case 'head':
       hipPivot(p, 0.4 * e); break;
+    case 'clear':
     case 'kick': case 'serve':
       L1.hip.rotation.x = -1.75 * e; L1.knee.rotation.x = 0.35 * (1 - e); hipPivot(p, -0.28 * e);
       for (const A of p.arms) A.sh.rotation.z = A.sx * 0.8 * e; break;
@@ -1880,6 +1915,7 @@ function actionPose(p, part, e, u = 0) {
       p.body.position.y += 0.25 * e;
       L1.hip.rotation.x = -2.1 * e; L1.knee.rotation.x = 0.1; L0.hip.rotation.x = 0.4 * e; hipPivot(p, -0.4 * e);
       for (const A of p.arms) A.sh.rotation.z = A.sx * 1.2 * e; break;
+    case 'smash':
     case 'ult':
     case 'spike': {          // sideways 360° spin: kicking leg swung out to the side, side of the foot meets the ball
       const spin = u < 1 ? u * u * (3 - 2 * u) : 1;        // smooth full turn
