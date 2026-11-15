@@ -1454,6 +1454,8 @@ function updateDropZone(dt) {
   D.ring.rotation.z = D.spin;
   D.ring.scale.set(r * 2, r * 2, 1);
   if (dig) D.ring.scale.multiplyScalar(1 + Math.sin(performance.now() / 70) * 0.04);
+  else if (match.lastPart === 'serve-hang') D.ring.scale.multiplyScalar(1 + Math.sin(performance.now() / 260) * 0.12);
+  else if (match.lastPart === 'serve-snap') D.ring.scale.multiplyScalar(0.85);
   const p = D.lineGeo.attributes.position;
   p.setXYZ(0, ball.x, Math.max(ball.y, 0.05), ball.z); p.setXYZ(1, Lc.x, 0.03, Lc.z);
   p.needsUpdate = true;
@@ -1846,7 +1848,9 @@ function setTarget(p, isSet) {
   return { x, z };
 }
 const bodyPart = (hr) => (hr < 0.95 ? 'foot' : hr < 1.25 ? 'knee' : hr < 1.6 ? 'chest' : 'head');
-const PART_NAME = { clear: 'Clear', smash: 'Smash', ult: 'ULTIMATE SPIN KICK', bicycle: 'Bicycle kick', dheader: 'Diving header', volley: 'Scissor volley', shank: 'Shank', 'serve-power': 'Power serve', foot: 'Inside foot', knee: 'Knee', chest: 'Chest', head: 'Header', kick: 'Kick', spike: 'Spike', serve: 'Serve', toss: 'Toss', body: 'Body', block: 'Block', stuff: 'Stuff block', dig: 'Dig' };
+// snap: flat and quick · hang: high and floaty
+const serveApex = (part, tier) => (part === 'serve-hang' ? (tier === 2 ? 4.6 : 5.0) : (tier === 2 ? 2.45 : 2.9));
+const PART_NAME = { 'serve-snap': 'Snap serve', 'serve-hang': 'Hang serve', clear: 'Clear', smash: 'Smash', ult: 'ULTIMATE SPIN KICK', bicycle: 'Bicycle kick', dheader: 'Diving header', volley: 'Scissor volley', shank: 'Shank', 'serve-power': 'Power serve', foot: 'Inside foot', knee: 'Knee', chest: 'Chest', head: 'Header', kick: 'Kick', spike: 'Spike', serve: 'Serve', toss: 'Toss', body: 'Body', block: 'Block', stuff: 'Stuff block', dig: 'Dig' };
 
 function jitter(m) {
   const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * m;
@@ -2118,11 +2122,17 @@ const WHIFF_DELAY = 0.7;          // can't swing again for this long after swing
 let recoverT = 0;
 let approach = null;              // { p, needle, dead, lastSeen } for the ball currently coming at you
 
-function setMeterZones(gh = GREEN_HALF, yh = YELLOW_HALF) {
+// two serves: J+J = SNAP (receiver's green comes EARLY), J+K = HANG (green comes LATE). Fixed for that meter — never moves.
+const SERVE_GC = { 'serve-snap': 0.62, 'serve-hang': 0.82 };
+const isServePart = (part) => part === 'serve-snap' || part === 'serve-hang';
+let serveType = 'serve-snap';     // which serve my second tap asked for
+function setMeterZones(gh = GREEN_HALF, yh = YELLOW_HALF, gc = G_CENTER) {
   const g = document.getElementById('tmf-zone'), n = document.getElementById('tmf-near');
   g.style.opacity = '1'; n.style.opacity = '1';
-  g.style.left = `${(G_CENTER - gh) * 100}%`; g.style.width = `${gh * 200}%`;
-  n.style.left = `${(G_CENTER - yh) * 100}%`; n.style.width = `${yh * 200}%`;
+  g.style.left = `${(gc - gh) * 100}%`; g.style.width = `${gh * 200}%`;
+  n.style.left = `${(gc - yh) * 100}%`; n.style.width = `${yh * 200}%`;
+  const gh2 = document.getElementById('tmf-ghost');
+  if (gh2) { gh2.style.left = `${G_CENTER * 100}%`; gh2.style.opacity = gc === G_CENTER ? '0' : '1'; }
 }
 function canSwing() {
   if (!me || !playing) return false;
@@ -2194,8 +2204,10 @@ function updateApproach() {
   const r = toReal(c.tau);
   if (!approach) {
     if (r > APPROACH_R) { el.classList.remove('charging'); return; }
-    approach = { p: Math.random() < 0.4 ? 1.8 : 1, needle: 0, dead: false, lastSeen: 0 };
-    setMeterZones();
+    // receiving a serve: its type decides where the green sits for this one touch
+    const srv = match.phase === 'rally' && isServePart(match.lastPart) && match.last !== me.side ? match.lastPart : null;
+    approach = { p: Math.random() < 0.4 ? 1.8 : 1, needle: 0, dead: false, lastSeen: 0, gc: srv ? SERVE_GC[srv] : G_CENTER, srv };
+    setMeterZones(GREEN_HALF, YELLOW_HALF, approach.gc);
     sfx.cue();
   }
   if (approach.dead) { el.classList.remove('charging'); if (me) me.charging = null; return; }
@@ -2204,13 +2216,13 @@ function updateApproach() {
   if (approach.needle >= 1) { approach.dead = true; el.classList.remove('charging'); return; }   // let it go by
   el.classList.add('charging');
   me.charging = 'K';
-  const inGreen = Math.abs(approach.needle - G_CENTER) <= GREEN_HALF;
+  const inGreen = Math.abs(approach.needle - approach.gc) <= GREEN_HALF;
   $('tmf-marker').style.opacity = '1';
   $('tmf-marker').style.left = `${approach.needle * 100}%`;
   $('tmf-fill').style.width = `${approach.needle * 100}%`;
   $('tmf-label').textContent = inGreen ? 'NOW!' : me.y > 0.12 ? 'SPIKE' : match.phase === 'serve-toss' ? 'SERVE' : 'TAP';
   $('tmf-label').className = 'tmf-label ' + (inGreen ? 'perfect' : 'charge');
-  $('tmf-part').textContent = '';
+  $('tmf-part').textContent = approach.srv === 'serve-snap' ? 'SNAP SERVE · early' : approach.srv === 'serve-hang' ? 'HANG SERVE · wait' : '';
   floatT = 0.3;
 }
 // J or K tap: graded by where the needle is right now; the touch lands when the ball arrives
@@ -2218,7 +2230,7 @@ function tapSwing(kind) {
   if (!me || !playing) return;
   if (recoverT > 0) { sfx.miss(); return; }
   if (touchCd > 0 || pending) return;
-  if (match.phase === 'serve-toss' && iServe()) kind = 'K';   // serve is J, J (K works too)
+  if (match.phase === 'serve-toss' && iServe()) { serveType = kind === 'K' ? 'serve-hang' : 'serve-snap'; kind = 'K'; }   // J+J snap, J+K hang
   if (!ballIncoming()) return;                                   // ball not in play / not coming at you: nothing happens
   sfx.swing();
   if (smashIncoming()) {                                         // only J digs
@@ -2229,7 +2241,7 @@ function tapSwing(kind) {
   if (!approach || approach.dead || !ballIncoming()) { whiff(kind); return; }
   const c = findContact(me, prefFor(kind), true, 1.2);
   if (c.d > REACH) { whiff(kind); return; }
-  const e = approach.needle - G_CENTER;
+  const e = approach.needle - approach.gc;
   const tier = Math.abs(e) <= GREEN_HALF ? 2 : Math.abs(e) <= YELLOW_HALF ? 1 : 0;
   const early = e < 0;
   approach.dead = true;
@@ -2319,14 +2331,14 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
       else if (tier === 1) { const [ox, oz] = jitter(0.6); tg.x += ox; tg.z += oz; shot = P.solveSpeed(from, tg, 13 + 2 * chargeAmt); }   // stays inside the warning mark
       else shot = Math.random() < 0.5 ? P.solveSpeed(from, offOut(), 14) : P.solveApex(from, { x: s * 3, z: tg.z }, 4.6, true);
     } else {
-      part = isServe ? 'serve' : hr < 1.3 ? 'kick' : bodyPart(hr);
+      part = isServe ? serveType : hr < 1.3 ? 'kick' : bodyPart(hr);
       const settled = match.settled && match.poss === me.side;
       if (tier === 0) {
         // way off: out, or a floater that's easy to put away
         if (Math.random() < 0.5) shot = P.solveApex(from, offOut(), 3.6, true);
         else shot = P.solveApex(from, { x: s * 3.2, z: tg.z * 0.5 }, 5.6, true);
       } else {
-        let apex = isServe ? (tier === 2 ? 2.9 : 3.5) : settled ? (tier === 2 ? 3.0 : 3.7) : (tier === 2 ? 3.8 : 4.4);
+        let apex = isServe ? serveApex(part, tier) : settled ? (tier === 2 ? 3.0 : 3.7) : (tier === 2 ? 3.8 : 4.4);
         apex += weak * 0.5;
         const [ox, oz] = jitter(tier === 2 ? 0.25 : 1.0);
         tg.x += ox; tg.z += oz;
@@ -2335,10 +2347,10 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
     }
   }
   // style: how good the kick is decides how flashy it looks
-  if (kind === 'K' && !['spike', 'ult', 'serve', 'clear', 'smash'].includes(part)) {
+  if (kind === 'K' && !['spike', 'ult', 'clear', 'smash', 'serve-snap', 'serve-hang'].includes(part)) {
     if (tier === 2) part = hr >= 1.55 ? 'dheader' : (hr >= 1.1 || (match.settled && match.poss === me.side)) ? 'bicycle' : 'volley';
     else if (tier === 0) part = 'shank';
-  } else if (part === 'serve' && tier === 2) part = 'serve-power';
+  }
   setBall(shot);
   match.lastPart = part;
   if (part === 'ult') ballFire = true;
@@ -2441,6 +2453,8 @@ function contactJuice(part, label, at, mine, power = 0) {
   else if (part === 'spike' || part === 'bicycle') sfx.spike(1, pan);
   else if (part === 'dheader') { sfx.head(pan); sfx.kick(0.9, pan); }
   else if (part === 'volley' || part === 'serve-power') sfx.kick(1, pan);
+  else if (part === 'serve-snap') sfx.serveSnap(pan);
+  else if (part === 'serve-hang') sfx.serveHang(pan);
   else if (part === 'shank') sfx.body(pan);
   else if (part === 'kick' || part === 'serve' || part === 'foot') sfx.kick(part === 'foot' ? 0.4 : 0.8, pan);
   else if (part === 'knee') sfx.kick(0.3, pan);
@@ -2496,7 +2510,7 @@ function contactJuice(part, label, at, mine, power = 0) {
   } else if (part === 'bicycle' || part === 'dheader' || part === 'volley') {
     shake(0.4); fx.ring(at.x, at.z, { color: 0xffd34d, r: 2.0 });
     fx.emit(at.x, at.y, at.z, { n: 55, color: PAL.gold, speed: 4, up: 2.6, life: 0.9, size: 0.12 });
-  } else if (part === 'kick' || part === 'serve' || part === 'serve-power') shake(perfect ? 0.22 : 0.12);
+  } else if (part === 'kick' || part === 'serve' || part === 'serve-power' || isServePart(part)) shake(perfect ? 0.22 : 0.12);
   if (power) { fx.ring(at.x, at.z, { color: 0xffd34d, r: 1.4 }); shake(0.15); }
   else if (perfect) shake(0.1);
 }
@@ -2779,6 +2793,10 @@ function updateBall(dt) {
     if (ballFire) {
       fx.emit(ball.x, ball.y, ball.z, { n: 4, color: PAL.fire, bright: 2.2, speed: 0.6, up: 0.6, life: 0.45, size: 0.2, g: -1.5 });
       fx.emit(ball.x, ball.y, ball.z, { n: 1, color: 0x332222, bright: 0.6, speed: 0.3, up: 0.8, life: 0.8, size: 0.25, g: -1 });
+    } else if (match.lastPart === 'serve-snap' && match.phase === 'rally') {   // SNAP: thin, sharp, cool streaks
+      fx.emit(ball.x, ball.y, ball.z, { n: 3, color: [0xcfeaff, 0xffffff], bright: 1.8, speed: 0.05, up: 0, life: 0.16, size: 0.05, g: 0 });
+    } else if (match.lastPart === 'serve-hang' && match.phase === 'rally') {   // HANG: soft, warm smoke that lingers
+      fx.emit(ball.x, ball.y, ball.z, { n: 2, color: [0xffc98a, 0xffe2bf], bright: 0.9, speed: 0.25, up: 0.15, life: 0.9, size: 0.2, g: -0.3 });
     } else if (sp > 12) fx.emit(ball.x, ball.y, ball.z, { n: 3, color: PAL.warm, bright: 1.6, speed: 0.2, up: 0, life: 0.3, size: 0.12, g: 0 });
     else fx.emit(ball.x, ball.y, ball.z, { n: 1, color: [0xffe6a8, 0xffffff], bright: 1.1, speed: 0.1, up: 0, life: 0.22, size: 0.07, g: 0 });
     // whoosh when a fast ball goes by
@@ -2881,7 +2899,7 @@ function onRemoteMatch(m) {
 }
 
 /* ---------------- contact poses ---------------- */
-const ACTION_DURS = { clear: 0.4, smash: 0.5, ult: 0.85, bicycle: 0.8, dheader: 0.6, volley: 0.5, spike: 0.62, shank: 0.45, 'serve-power': 0.42, block: 0.45, stuff: 0.5 };
+const ACTION_DURS = { 'serve-snap': 0.26, 'serve-hang': 0.6, clear: 0.4, smash: 0.5, ult: 0.85, bicycle: 0.8, dheader: 0.6, volley: 0.5, spike: 0.62, shank: 0.45, 'serve-power': 0.42, block: 0.45, stuff: 0.5 };
 // rotate the body around the hips (not the feet) so flips and dives look right
 function hipPivot(p, rx, rz = 0) {
   const h = 0.95;
@@ -2902,6 +2920,15 @@ function actionPose(p, part, e, u = 0) {
     case 'head':
       hipPivot(p, 0.4 * e); break;
     case 'clear':
+    case 'serve-snap':       // quick, short flick — barely any wind-up
+      L1.hip.rotation.x = -1.2 * e; L1.knee.rotation.x = 0.6 * (1 - e); hipPivot(p, -0.12 * e);
+      for (const A of p.arms) A.sh.rotation.z = A.sx * 0.5 * e; break;
+    case 'serve-hang': {     // big, slow wind-up and a high follow-through
+      const wind = u < 0.35 ? u / 0.35 : 1, thru = u < 0.35 ? 0 : (u - 0.35) / 0.65;
+      L1.hip.rotation.x = 0.7 * wind * (1 - thru) - 2.3 * thru * e; L1.knee.rotation.x = 0.9 * (1 - thru) + 0.1;
+      hipPivot(p, 0.15 * wind * (1 - thru) - 0.45 * thru * e); p.body.position.y += 0.12 * thru * e;
+      for (const A of p.arms) A.sh.rotation.z = A.sx * (0.6 + 0.9 * thru) * e; break;
+    }
     case 'kick': case 'serve':
       L1.hip.rotation.x = -1.75 * e; L1.knee.rotation.x = 0.35 * (1 - e); hipPivot(p, -0.28 * e);
       for (const A of p.arms) A.sh.rotation.z = A.sx * 0.8 * e; break;
@@ -3187,18 +3214,17 @@ function cpuShot(p, ai, kind, tier, plan = null) {
       const [ox, oz] = jitter([2.0, 1.0, 0.5][tier]); tg.x += ox; tg.z += oz;
       shot = smash && tier > 0 ? P.solveApex(from, tg, Math.max(from.y + 0.35, 2.6), true) : P.solveApex(from, tg, 6.5, true);
     } else {
-      part = isServe ? 'serve' : hr < 1.3 ? 'kick' : bodyPart(hr);
+      part = isServe ? (Math.random() < 0.5 ? 'serve-snap' : 'serve-hang') : hr < 1.3 ? 'kick' : bodyPart(hr);
       if (tier === 0) {
         shot = Math.random() < 0.5
           ? P.solveApex(from, { x: -s * (F.hl + 0.8 + Math.random()), z: tg.z }, 3.6, true)        // sails out
           : P.solveApex(from, { x: -s * 3.2, z: tg.z * 0.5 }, 5.6, true);                         // floater
       } else {
-        const apex = isServe ? (tier === 2 ? 2.9 : 3.5) : settled ? (tier === 2 ? 3.0 : 3.7) : (tier === 2 ? 3.8 : 4.4);
+        const apex = isServe ? serveApex(part, tier) : settled ? (tier === 2 ? 3.0 : 3.7) : (tier === 2 ? 3.8 : 4.4);
         const [ox, oz] = jitter(tier === 2 ? 0.25 : 1.0); tg.x += ox; tg.z += oz;
         shot = P.solveApex(from, tg, apex, true);
       }
       if (tier === 2 && !isServe && part === 'kick') part = settled ? 'bicycle' : 'volley';
-      if (tier === 2 && isServe) part = 'serve-power';
     }
   }
   setBall(shot);

@@ -253,6 +253,16 @@ export const sfx = {
   },
   whoosh(pan = 0) { noise({ dur: 0.3, f: 500, f2: 2600, q: 1.1, gain: 0.16, attack: 0.05, pan }); },
   aim() { tone({ f: 880, dur: 0.04, gain: 0.05, type: 'triangle' }); },
+  serveSnap(pan = 0) {           // SNAP: crisp high "tsk" + a quick zip
+    noise({ dur: 0.04, type: 'highpass', f: 3500, gain: 0.5, pan });
+    tone({ f: 420, f2: 160, dur: 0.07, gain: 0.4, pan });
+    noise({ dur: 0.16, f: 1800, f2: 5200, q: 1.4, gain: 0.14, attack: 0.01, pan });
+  },
+  serveHang(pan = 0) {           // HANG: low "whomp" + a soft, slow whoosh
+    tone({ f: 110, f2: 55, dur: 0.3, gain: 0.7, pan });
+    noise({ dur: 0.05, type: 'lowpass', f: 900, gain: 0.35, pan });
+    noise({ dur: 0.55, f: 300, f2: 900, q: 0.8, gain: 0.1, attack: 0.12, pan });
+  },
   meterReady() { [660, 880, 1320].forEach((f, i) => tone({ f, dur: 0.18, gain: 0.08, delay: i * 0.06, type: 'triangle' })); },
   meterDrain() { tone({ f: 520, f2: 180, dur: 0.35, gain: 0.07, type: 'sawtooth' }); },
   ult(pan = 0) {                 // ULTIMATE: huge boom, crack, rising roar, shimmer

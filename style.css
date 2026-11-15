@@ -318,3 +318,4 @@ button { font-family: inherit; }
 .tp-row.on b { color: #08131c; }
 @media (max-width: 700px) { #train-panel { top: auto; bottom: 64px; } }
 #zone-chip { display: none !important; }
+.tmf-ghost { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: rgba(255,255,255,.55); z-index: 1; opacity: 0; pointer-events: none; }
