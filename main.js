@@ -3090,6 +3090,14 @@ const CPU_LEVELS = {
 };
 let cpuLevel = 'normal';
 try { cpuLevel = localStorage.getItem('takraw-cpu') || 'normal'; } catch {}
+// test mode: force the CPU to play one kind of shot every time (menu / H → options)
+let cpuMove = 'mixed';
+try { cpuMove = localStorage.getItem('takraw-cpu-move') || 'mixed'; } catch {}
+function setCpuMove(v) {
+  cpuMove = ['mixed', 'smash', 'spike', 'clear', 'kick'].includes(v) ? v : 'mixed';
+  try { localStorage.setItem('takraw-cpu-move', cpuMove); } catch {}
+  for (const id of ['cpu-move', 'opt-cpu-move']) { const el = document.getElementById(id); if (el) el.value = cpuMove; }
+}
 const cpu = { serial: -1, reactT: 0, target: null, plan: null, swung: false, serveT: 0, served: false, willPlay: true, digOk: false, cell: null, pickAimSoon: true };
 let ballSerial = 0;                      // bumps every time the ball's flight changes (any touch)
 
@@ -3132,7 +3140,7 @@ function cpuStartMatch() {
 const newAI = () => ({ serial: -1, reactT: 0, target: null, plan: null, swung: false, serveT: 0, served: false, willPlay: true, digOk: false, cell: null, pickAimSoon: true });
 
 // ---- the CPU makes a touch (mirrors the human's doTouch rules, with a rolled timing tier) ----
-function cpuShot(p, ai, kind, tier) {
+function cpuShot(p, ai, kind, tier, plan = null) {
   const s = sideSign(p.side);
   if (!ballLive) return;
   const isServe = match.phase === 'serve-toss';
@@ -3158,13 +3166,13 @@ function cpuShot(p, ai, kind, tier) {
   } else {
     const aim = ai.cell || cpuPickAim(p, ai);
     const tg = { x: aim.x, z: aim.z };
-    const spike = air && !isServe && settled && ball.y >= 1.7 && Math.abs(p.pos.x) <= 3.2;
+    const spike = air && !isServe && plan !== 'smash' && plan !== 'clear' && (settled || plan === 'spike') && ball.y >= 1.7 && Math.abs(p.pos.x) <= 3.2;
     if (spike) {
       part = 'spike';
       const [ox, oz] = jitter([2.2, 1.0, 0.35][tier]); tg.x += ox; tg.z += oz;
       shot = tier === 0 ? P.solveApex(from, { x: -s * (F.hl + 1.2), z: tg.z }, 3.4, true) : P.solveSpeed(from, tg, tier === 2 ? 19 : 15);
     } else if (air && !isServe) {
-      const smash = firstTouch && incoming === 'clear';
+      const smash = plan === 'smash' || (plan !== 'clear' && firstTouch && incoming === 'clear');
       part = smash ? 'smash' : 'clear';
       const [ox, oz] = jitter([2.0, 1.0, 0.5][tier]); tg.x += ox; tg.z += oz;
       shot = smash && tier > 0 ? P.solveApex(from, tg, Math.max(from.y + 0.35, 2.6), true) : P.solveApex(from, tg, 6.5, true);
@@ -3273,16 +3281,22 @@ function cpuThink(p, ai, dt) {
       else if (c === 1) ai.plan = Math.random() < L.spike ? 'set' : 'kick';
       else ai.plan = match.settled && Math.abs(ball.x) < 3.4 ? 'spike' : 'kick';
       if (c === 1 && ai.plan === 'kick' && match.settled && Math.random() < L.spike * 0.6) ai.plan = 'spike';
+      if (!attack && cpuMove !== 'mixed') {
+        if (cpuMove === 'smash' || cpuMove === 'clear') ai.plan = c < 2 && cpuIntercept(p, 2.45) ? cpuMove : (c === 0 ? 'control' : 'kick');
+        else if (cpuMove === 'spike') ai.plan = c === 0 ? 'control' : c === 1 ? 'set' : 'spike';
+        else if (cpuMove === 'kick') ai.plan = 'kick';
+      }
     }
     const coming = (landingCache && P.sideOfX(landingCache.x) === p.side) || P.sideOfX(ball.x) === p.side;
     if (coming && ai.willPlay && !ai.swung) {
       if (ai.reactT > 0) ai.reactT -= dt;
       else {
-        const h = ai.plan === 'spike' ? 2.45 : ai.plan === 'dig' ? 0.9 : 0.95;
+        const jumpPlan = ai.plan === 'spike' || ai.plan === 'smash' || ai.plan === 'clear';
+        const h = jumpPlan ? 2.45 : ai.plan === 'dig' ? 0.9 : 0.95;
         if (!ai.target) ai.target = cpuIntercept(p, h);
-        if (ai.target) { tx = ai.target.x - s * (ai.plan === 'spike' ? 0.15 : 0.35); tz = ai.target.z; }   // just behind the contact point
+        if (ai.target) { tx = ai.target.x - s * (jumpPlan ? 0.15 : 0.35); tz = ai.target.z; }   // just behind the contact point
         // jump for the spike as the set drops
-        if (ai.plan === 'spike' && p.y <= 0 && ball.vy < 0 && ball.y < 3.25 && Math.hypot(ball.x - p.pos.x, ball.z - p.pos.z) < 1.1) {
+        if (jumpPlan && p.y <= 0 && ball.vy < 0 && ball.y < 3.25 && Math.hypot(ball.x - p.pos.x, ball.z - p.pos.z) < 1.1) {
           p.vy = JUMP_V; sfx.jump(); fx.dust(p.pos.x, p.pos.z, 12);
           p.tele = ai.cell || cpuPickAim(p, ai);
         }
@@ -3291,10 +3305,10 @@ function cpuThink(p, ai, dt) {
         const inReach = d < 0.9 && ball.vy < 0 && (p.y > 0.12 ? hr < 2.2 && hr > 1.0 : hr < 1.35 && hr > 0.35);
         if (inReach && P.sideOfX(ball.x) === p.side) {
           ai.swung = true;
-          const tier = cpuRollTier();
+          const tier = cpuMove !== 'mixed' ? Math.max(1, cpuRollTier()) : cpuRollTier();   // forced moves always come off
           if (ai.plan === 'dig') { if (ai.digOk) cpuShot(p, ai, 'DIG', 2); }
           else if (ai.plan === 'control' || ai.plan === 'set') cpuShot(p, ai, 'J', tier);
-          else cpuShot(p, ai, 'K', tier);
+          else cpuShot(p, ai, 'K', tier, ai.plan);
           p.tele = null;
         }
       }
@@ -3953,6 +3967,8 @@ $('create-btn').onclick = () => hostGame();
 $('join-btn').onclick = joinGame;
 $('practice-btn').onclick = practice;
 $('cpu-btn').onclick = playCPU;
+setCpuMove(cpuMove);
+for (const id of ['cpu-move', 'opt-cpu-move']) { const el = document.getElementById(id); if (el) el.onchange = (e) => setCpuMove(e.target.value); }
 for (const b of document.querySelectorAll('.cpu-lvl')) {
   b.classList.toggle('on', b.dataset.lvl === cpuLevel);
   b.onclick = () => {

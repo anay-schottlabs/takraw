@@ -308,3 +308,4 @@ button { font-family: inherit; }
 .rs-btn.rm { color: var(--red); }
 @media (max-width: 480px) { .room-cols { grid-template-columns: 1fr; } }
 .lr-code.team { letter-spacing: 1px; font-size: 14px; }
+.cpu-move { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 6px; font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
