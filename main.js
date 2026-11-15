@@ -3138,9 +3138,9 @@ function actionPose(p, part, e, u = 0) {
       for (const A of p.arms) { A.sh.rotation.z = A.sx * 1.4 * e; A.sh.rotation.x = -0.3 * e; }
       break;
     }
-    case 'bicycle': {        // overhead scissor: hop, roll back, legs swap in the air
-      p.body.position.y += 0.75 * e;
-      hipPivot(p, -2.3 * e);
+    case 'bicycle': {        // overhead scissor: a full backward 360 — it keeps rotating the same way and lands upright
+      p.body.position.y += 0.75 * Math.sin(Math.PI * Math.min(1, u * 1.1));
+      hipPivot(p, -Math.PI * 2 * sstep(u));
       const a = Math.min(1, u * 2.2), b2 = Math.max(0, Math.min(1, u * 2.2 - 0.5));
       L0.hip.rotation.x = -1.9 * Math.sin(Math.PI * a) * e;
       L1.hip.rotation.x = -2.9 * Math.sin(Math.PI * b2) * e - 0.4 * e;
