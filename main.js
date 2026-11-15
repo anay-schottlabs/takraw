@@ -1223,6 +1223,7 @@ function updateLocal(dt) {
 }
 
 function updateRemote(dt) {
+  if (mode === 'cpu') return;                       // the CPU moves itself (updateCPU)
   if (!them || !them.target) return;
   const t = them.target;
   const k = 1 - Math.exp(-dt * 14);
@@ -1623,13 +1624,13 @@ let lastWhoosh = 0;
 let landingCache = null, landingDirty = true;   // ball flight is deterministic: predict once per change
 
 const isAuthority = () => mode !== 'guest';
-const decidesHalf = (half) => mode === 'solo' || (me && me.side === half);
+const decidesHalf = (half) => mode === 'solo' || mode === 'cpu' || (me && me.side === half);
 const playerBySide = (side) => (me && me.side === side ? me : them && them.side === side ? them : null);
 const serveLocked = () => !!me && (match.phase === 'serve-wait' || match.phase === 'serve-toss') && match.server === me.side;
 
 function setBall(b) {
   ball.x = b.x; ball.y = b.y; ball.z = b.z; ball.vx = b.vx; ball.vy = b.vy; ball.vz = b.vz;
-  hist.length = 0; pending = null; acc = 0; deadBall.on = false; approach = null; ballFire = false; landingDirty = true;
+  hist.length = 0; pending = null; acc = 0; deadBall.on = false; approach = null; ballFire = false; landingDirty = true; ballSerial++;
   pendingCross = null;
 }
 const packBall = () => [ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz].map((v) => +v.toFixed(4));
@@ -2952,6 +2953,245 @@ function toggleHelp(force) {
 }
 
 /* =====================================================================
+   CPU OPPONENT — plays the right side in "Play vs CPU" (full rules, local)
+   It reads the ball, runs to the contact point after a short reaction delay,
+   controls / sets / kicks / jump-spikes, digs smashes sometimes, serves,
+   aims away from you, and lets balls that are going out drop.
+   ===================================================================== */
+const CPU_LEVELS = {
+  easy:   { react: 0.42, speed: 3.1, perfect: 0.25, good: 0.45, spike: 0.2, dig: 0.3,  readOut: 0.5,  serveDelay: 1.8 },
+  normal: { react: 0.26, speed: 3.7, perfect: 0.45, good: 0.4,  spike: 0.5, dig: 0.55, readOut: 0.85, serveDelay: 1.4 },
+  hard:   { react: 0.14, speed: 4.3, perfect: 0.7,  good: 0.25, spike: 0.8, dig: 0.8,  readOut: 1.0,  serveDelay: 1.1 },
+};
+let cpuLevel = 'normal';
+try { cpuLevel = localStorage.getItem('takraw-cpu') || 'normal'; } catch {}
+const cpu = { serial: -1, reactT: 0, target: null, plan: null, swung: false, serveT: 0, served: false, willPlay: true, digOk: false, cell: null };
+let ballSerial = 0;                      // bumps every time the ball's flight changes (any touch)
+
+const cpuOn = () => mode === 'cpu' && !!them;
+function cpuRollTier() {
+  const L = CPU_LEVELS[cpuLevel], r = Math.random();
+  return r < L.perfect ? 2 : r < L.perfect + L.good ? 1 : 0;
+}
+// pick one of the 9 spots on my (the human's) side, preferring ones far from where I'm standing
+function cpuPickAim() {
+  const p = them, s = sideSign(p.side);
+  let best = null, bestScore = -1;
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+    const x = s * AIM_ROWS[r], z = s * AIM_COLS[c];
+    const d = me ? Math.hypot(x - me.pos.x, z - me.pos.z) : 3;
+    const score = d + Math.random() * 2.5;
+    if (score > bestScore) { bestScore = score; best = { x, z }; }
+  }
+  cpu.cell = best;
+  them.aim = { x: best.x, z: best.z };            // shows as their red aim spot on your court
+  return best;
+}
+// where (on my side) the ball first drops through height h, if it does
+function cpuIntercept(h) {
+  const b = P.copyBall(ball), s = sideSign(them.side);
+  for (let t = 0; t < 4;) {
+    t += P.STEP * 4;
+    const end = P.step(b, P.STEP * 4, null);
+    if (b.vy < 0 && b.y <= h && P.sideOfX(b.x) === them.side) return { x: b.x, z: b.z };
+    if (end) return P.sideOfX(b.x) === them.side ? { x: b.x, z: b.z } : null;
+  }
+  void s;
+  return null;
+}
+
+function cpuStartMatch() {
+  Object.assign(cpu, { serial: -1, reactT: 0, target: null, plan: null, swung: false, serveT: 0, served: false });
+  pickAimSoon = true;
+}
+let pickAimSoon = true;
+
+// ---- the CPU makes a touch (mirrors the human's doTouch rules, with a rolled timing tier) ----
+function cpuShot(kind, tier) {
+  const p = them, s = sideSign(p.side);
+  if (!ballLive) return;
+  const isServe = match.phase === 'serve-toss';
+  if (!isServe && match.poss === p.side && match.cnt >= 3) return;           // never takes a 4th touch
+  const from = { x: ball.x, y: ball.y, z: ball.z };
+  const hr = ball.y - p.y, air = p.y > 0.12;
+  const firstTouch = match.poss !== p.side || match.cnt === 0;
+  const incoming = firstTouch ? match.lastPart : null;
+  const settled = match.poss === p.side && match.settled;
+  let part, shot;
+  if (kind === 'DIG') {
+    part = 'dig';
+    const tg = { x: from.x + THREE.MathUtils.clamp(-s * 3.8 - from.x, -0.6, 0.6), z: from.z + THREE.MathUtils.clamp(-from.z, -0.5, 0.5) };
+    shot = P.solveApex({ x: from.x, y: Math.max(from.y, 0.4), z: from.z }, tg, 6.7, false);
+  } else if (kind === 'J') {
+    part = bodyPart(hr);
+    const isSet = !firstTouch;
+    const tg = setTarget(p, isSet);
+    const [ox, oz] = jitter([2.0, 0.8, 0.2][tier]);
+    tg.x += ox; tg.z += oz;
+    const apex = tier === 0 ? 2.8 + Math.random() * 3 : (isSet ? 6.7 : 5.8) - (tier === 1 ? 0.5 : 0);
+    shot = P.solveApex(from, tg, apex, false);
+  } else {
+    const aim = cpu.cell || cpuPickAim();
+    const tg = { x: aim.x, z: aim.z };
+    const spike = air && !isServe && settled && ball.y >= 1.7 && Math.abs(p.pos.x) <= 3.2;
+    if (spike) {
+      part = 'spike';
+      const [ox, oz] = jitter([2.2, 1.0, 0.35][tier]); tg.x += ox; tg.z += oz;
+      shot = tier === 0 ? P.solveApex(from, { x: -s * (F.hl + 1.2), z: tg.z }, 3.4, true) : P.solveSpeed(from, tg, tier === 2 ? 19 : 15);
+    } else if (air && !isServe) {
+      const smash = firstTouch && incoming === 'clear';
+      part = smash ? 'smash' : 'clear';
+      const [ox, oz] = jitter([2.0, 1.0, 0.5][tier]); tg.x += ox; tg.z += oz;
+      shot = smash && tier > 0 ? P.solveApex(from, tg, Math.max(from.y + 0.35, 2.6), true) : P.solveApex(from, tg, 6.5, true);
+    } else {
+      part = isServe ? 'serve' : hr < 1.3 ? 'kick' : bodyPart(hr);
+      if (tier === 0) {
+        shot = Math.random() < 0.5
+          ? P.solveApex(from, { x: -s * (F.hl + 0.8 + Math.random()), z: tg.z }, 3.6, true)        // sails out
+          : P.solveApex(from, { x: -s * 3.2, z: tg.z * 0.5 }, 5.6, true);                         // floater
+      } else {
+        const apex = isServe ? (tier === 2 ? 2.9 : 3.5) : settled ? (tier === 2 ? 3.0 : 3.7) : (tier === 2 ? 3.8 : 4.4);
+        const [ox, oz] = jitter(tier === 2 ? 0.25 : 1.0); tg.x += ox; tg.z += oz;
+        shot = P.solveApex(from, tg, apex, true);
+      }
+      if (tier === 2 && !isServe && part === 'kick') part = settled ? 'bicycle' : 'volley';
+      if (tier === 2 && isServe) part = 'serve-power';
+    }
+  }
+  setBall(shot);
+  match.lastPart = part;
+  if (isServe) { match.phase = 'rally'; match.poss = p.side; match.cnt = 3; }
+  else {
+    if (match.poss !== p.side) { match.poss = p.side; match.cnt = 0; }
+    match.cnt++;
+  }
+  match.last = p.side;
+  match.settled = (kind === 'J' && tier >= 1) || kind === 'DIG';
+  p.facing = kind === 'K' ? Math.atan2(shot.vx, shot.vz) || p.facing : (s > 0 ? Math.PI / 2 : -Math.PI / 2);
+  p.action = { part, t: 0 };
+  if (kind === 'K') { cpu.cell = null; pickAimSoon = true; }
+  contactJuice(part, tier === 2 ? 'PERFECT' : tier === 1 ? 'GOOD' : 'LATE', from, false);
+  renderMatchUI();
+}
+
+function cpuToss() {
+  const p = them;
+  const o = heldOffset(p);
+  setBall({ x: p.pos.x + o.x, y: 1.0, z: p.pos.z + o.z, vx: o.fx * 0.25, vy: 5.6, vz: o.fz * 0.25 });
+  ballLive = true;
+  match.phase = 'serve-toss'; match.server = p.side;
+  match.poss = null; match.cnt = 0; match.last = null;
+  p.action = { part: 'toss', t: 0 };
+  contactJuice('toss', '', ball, false);
+  renderMatchUI();
+}
+
+function updateCPU(dt) {
+  if (!cpuOn()) return;
+  const p = them, s = sideSign(p.side), L = CPU_LEVELS[cpuLevel];
+  if (pickAimSoon && match.phase !== 'serve-toss') { pickAimSoon = false; cpuPickAim(); }
+  let tx = -s * 4.2, tz = 0, run = true;          // home spot: middle of my half
+
+  // ---------- serving ----------
+  if (match.phase === 'serve-wait' && match.server === p.side) {
+    p.pos.set(-s * (F.hl - F.serveFromBack), 0, 0); p.vel.set(0, 0, 0);
+    p.facing = s > 0 ? Math.PI / 2 : -Math.PI / 2;
+    run = false;
+    cpu.serveT += dt; cpu.served = false;
+    if (cpu.serveT > L.serveDelay) { cpu.serveT = 0; cpuPickAim(); cpuToss(); }
+  } else if (match.phase === 'serve-toss' && match.server === p.side) {
+    run = false;
+    if (!cpu.served && ball.vy < 0 && ball.y <= 1.15) { cpu.served = true; cpuShot('K', cpuRollTier()); }
+  } else cpu.serveT = 0;
+
+  // ---------- rally ----------
+  if (ballLive && match.phase === 'rally') {
+    if (cpu.serial !== ballSerial) {                 // new flight: re-read the ball
+      cpu.serial = ballSerial;
+      cpu.swung = false; cpu.target = null;
+      const own = match.last === p.side;             // my own set/control coming back down
+      cpu.reactT = own ? 0.08 : L.react * (0.8 + Math.random() * 0.4);
+      const firstTouch = match.poss !== p.side || match.cnt === 0;
+      const attack = isAttack(match.lastPart) && match.last !== p.side;
+      cpu.digOk = attack ? Math.random() < L.dig : true;
+      // reading an out ball: let it drop (easy CPUs misjudge sometimes)
+      const out = landingCache && (landingCache.type === 'board' || !P.inCourt(landingCache.x, landingCache.z)) && P.sideOfX(landingCache.x) === p.side;
+      cpu.willPlay = !(firstTouch && out && Math.random() < L.readOut);
+      // plan for this touch
+      const c = match.poss === p.side ? match.cnt : 0;
+      if (attack) cpu.plan = 'dig';
+      else if (c === 0) cpu.plan = Math.random() < 0.75 ? 'control' : 'kick';
+      else if (c === 1) cpu.plan = Math.random() < L.spike ? 'set' : 'kick';
+      else cpu.plan = match.settled && Math.abs(ball.x) < 3.4 ? 'spike' : 'kick';
+      if (c === 1 && cpu.plan === 'kick' && match.settled && Math.random() < L.spike * 0.6) cpu.plan = 'spike';
+    }
+    const coming = (landingCache && P.sideOfX(landingCache.x) === p.side) || P.sideOfX(ball.x) === p.side;
+    if (coming && cpu.willPlay && !cpu.swung) {
+      if (cpu.reactT > 0) cpu.reactT -= dt;
+      else {
+        const h = cpu.plan === 'spike' ? 2.45 : cpu.plan === 'dig' ? 0.9 : 0.95;
+        if (!cpu.target) cpu.target = cpuIntercept(h);
+        if (cpu.target) { tx = cpu.target.x - s * (cpu.plan === 'spike' ? 0.15 : 0.35); tz = cpu.target.z; }   // just behind the contact point
+        // jump for the spike as the set drops
+        if (cpu.plan === 'spike' && p.y <= 0 && ball.vy < 0 && ball.y < 3.25 && Math.hypot(ball.x - p.pos.x, ball.z - p.pos.z) < 1.1) {
+          p.vy = JUMP_V; sfx.jump(); fx.dust(p.pos.x, p.pos.z, 12);
+          them.tele = cpu.cell || cpuPickAim();
+        }
+        // hit when the ball is in reach
+        const d = Math.hypot(ball.x - p.pos.x, ball.z - p.pos.z), hr = ball.y - p.y;
+        const inReach = d < 0.9 && ball.vy < 0 && (p.y > 0.12 ? hr < 2.2 && hr > 1.0 : hr < 1.35 && hr > 0.35);
+        if (inReach && P.sideOfX(ball.x) === p.side) {
+          cpu.swung = true;
+          const tier = cpuRollTier();
+          if (cpu.plan === 'dig') { if (cpu.digOk) cpuShot('DIG', 2); }
+          else if (cpu.plan === 'control' || cpu.plan === 'set') cpuShot('J', tier);
+          else cpuShot('K', tier);
+          them.tele = null;
+        }
+      }
+    }
+  }
+
+  // ---------- movement / animation ----------
+  if (run) {
+    const dx = tx - p.pos.x, dz = tz - p.pos.z, dist = Math.hypot(dx, dz);
+    const sp = dist > 0.12 ? Math.min(L.speed, dist * 6) : 0;
+    const vx = dist > 0.12 ? (dx / dist) * sp : 0, vz = dist > 0.12 ? (dz / dist) * sp : 0;
+    p.vel.x += (vx - p.vel.x) * Math.min(1, dt * 10);
+    p.vel.z += (vz - p.vel.z) * Math.min(1, dt * 10);
+    p.pos.x += p.vel.x * dt; p.pos.z += p.vel.z * dt;
+    applyBoundaries(p);
+  }
+  p.vy -= GRAV * dt;
+  p.y = Math.max(0, p.y + p.vy * dt);
+  if (p.y === 0 && p.vy < 0) p.vy = 0;
+  const speed = Math.hypot(p.vel.x, p.vel.z);
+  if (speed > 0.3) {
+    let d = Math.atan2(p.vel.x, p.vel.z) - p.facing;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    p.facing += d * Math.min(1, dt * 12);
+  } else if (!p.action) {
+    let d = (s > 0 ? Math.PI / 2 : -Math.PI / 2) - p.facing;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    p.facing += d * Math.min(1, dt * 6);
+  }
+  animatePlayer(p, speed, dt);
+  updateRing(p);
+}
+
+function playCPU() {
+  readName(); showError('');
+  mode = 'cpu';
+  roomCode = '';
+  startGame('left');
+  spawnRemote('right', `CPU · ${cpuLevel.toUpperCase()}`);
+  them.displayName = `CPU (${cpuLevel})`;
+  cpuStartMatch();
+  resetMatch();
+  setStatus('');
+}
+
+/* =====================================================================
    Camera — behind your own player, looking across the net
    ===================================================================== */
 const camPos = new THREE.Vector3().copy(camera.position);
@@ -3059,7 +3299,7 @@ function startGame(side) {
   animatePlayer(me, 0, 0);
   updateCamera(0, true);
   showScreen('game');
-  ui.ping.textContent = mode === 'solo' ? 'PRACTICE' : `${roomCode} · — ms`;
+  ui.ping.textContent = mode === 'solo' ? 'PRACTICE' : mode === 'cpu' ? `VS CPU · ${cpuLevel.toUpperCase()}` : `${roomCode} · — ms`;
   setBoardNames();
   renderMatchUI();
 }
@@ -3317,6 +3557,15 @@ function teardown() {
 $('create-btn').onclick = () => hostGame();
 $('join-btn').onclick = joinGame;
 $('practice-btn').onclick = practice;
+$('cpu-btn').onclick = playCPU;
+for (const b of document.querySelectorAll('.cpu-lvl')) {
+  b.classList.toggle('on', b.dataset.lvl === cpuLevel);
+  b.onclick = () => {
+    cpuLevel = b.dataset.lvl;
+    try { localStorage.setItem('takraw-cpu', cpuLevel); } catch {}
+    document.querySelectorAll('.cpu-lvl').forEach((x) => x.classList.toggle('on', x === b));
+  };
+}
 $('cancel-btn').onclick = () => { teardown(); showScreen('home'); };
 $('leave-btn').onclick = () => { teardown(); showScreen('home'); };
 $('go-leave').onclick = () => { teardown(); showScreen('home'); };
@@ -3366,7 +3615,7 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);   // up to 10 fps without slowing the game (physics sub-steps handle it)
   const t0 = performance.now();
   autoQuality(dt);
-  if (playing) { updateLocal(dt); updateRemote(dt); updateBall(dt); }
+  if (playing) { updateLocal(dt); updateRemote(dt); updateCPU(dt); updateBall(dt); }
   if (window.__takrawBot) window.__takrawBot(dt);   // test hook (unused in normal play)
   updateCamera(dt);
   const t1 = performance.now();

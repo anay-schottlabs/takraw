@@ -273,3 +273,10 @@ button { font-family: inherit; }
 .lr-code { font-family: var(--display); font-weight: 800; letter-spacing: 4px; color: var(--gold); }
 .lr-join { padding: 6px 14px; font-size: 14px; }
 .lobby-empty { color: var(--muted); font-size: 13px; margin: 6px 0; }
+
+/* vs CPU */
+.cpu-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: stretch; }
+.cpu-lvls { display: flex; border: 1px solid var(--line); }
+.cpu-lvl { background: #0f0f12; color: var(--muted); border: 0; font-family: var(--display); font-weight: 800; letter-spacing: 1px; text-transform: uppercase; font-size: 13px; padding: 0 10px; cursor: pointer; }
+.cpu-lvl + .cpu-lvl { border-left: 1px solid var(--line); }
+.cpu-lvl.on { background: var(--blue); color: #08131c; }

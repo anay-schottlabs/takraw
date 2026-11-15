@@ -26,3 +26,8 @@ WASD move · Space jump · J set / dig (tap on green) · K kick / spike (tap on 
 - When the opponent jumps into a spike / smash, a red mark shows where it will land. Stand in it and a dig meter appears — only GREEN digs it (the ball pops straight up like a set); anything else is their point.
 - At the net, jump and press L right as their attack crosses over you: perfect = stuffed straight back down (very hard to return), good = deflected and still playable, otherwise it gets past you.
 - A J on your third touch is an emergency save that goes over the net — it can never cause a fourth touch.
+
+## Modes
+- **Create / Join** — online 1v1 (peer-to-peer). Open games are listed on the menu.
+- **Play vs CPU** — full match against a computer opponent (Easy / Normal / Hard). It reads the ball, controls, sets, spikes, digs and serves.
+- **Practice** — ball machine (F) and serving practice (J).
