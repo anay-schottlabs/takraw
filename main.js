@@ -81,6 +81,70 @@ composer.addPass(focusPass);
 composer.addPass(new OutputPass());
 
 /* =====================================================================
+   Graphics quality — Auto starts High and steps down if frames run slow
+   ===================================================================== */
+const QUALITY = {
+  high:   { dpr: 2,    shadow: 2048, soft: true,  bloom: true,  focus: true,  spots: true,  particles: 1 },
+  medium: { dpr: 1.25, shadow: 1024, soft: false, bloom: true,  focus: true,  spots: false, particles: 0.7 },
+  low:    { dpr: 0.9,  shadow: 0,    soft: false, bloom: false, focus: false, spots: false, particles: 0.4 },
+};
+const QUALITY_ORDER = ['high', 'medium', 'low'];
+let qualityPref = 'auto';
+try { qualityPref = localStorage.getItem('takraw-quality') || 'auto'; } catch {}
+let qualityLevel = null;
+const QUALITY_PARTICLES = () => (QUALITY[qualityLevel] || QUALITY.medium).particles;
+function applyQuality(level) {
+  if (level === qualityLevel) return;
+  const q = QUALITY[level];
+  const prevShadow = renderer.shadowMap.enabled;
+  qualityLevel = level;
+  const dpr = Math.min(window.devicePixelRatio || 1, q.dpr);
+  renderer.setPixelRatio(dpr);
+  composer.setPixelRatio(dpr);
+  composer.setSize(window.innerWidth, window.innerHeight);
+  bloom.enabled = q.bloom;
+  focusPass.enabled = q.focus;
+  renderer.shadowMap.enabled = q.shadow > 0;
+  renderer.shadowMap.type = q.soft ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+  key.castShadow = q.shadow > 0;
+  if (q.shadow > 0) {
+    key.shadow.mapSize.set(q.shadow, q.shadow);
+    if (key.shadow.map) { key.shadow.map.dispose(); key.shadow.map = null; }
+  }
+  for (const sp of spotLights) sp.visible = q.spots;
+  if (prevShadow !== renderer.shadowMap.enabled) {
+    scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
+  }
+  const lbl = document.getElementById('quality-now');
+  if (lbl) lbl.textContent = qualityPref === 'auto' ? `(auto: ${level})` : '';
+}
+function setQualityPref(p) {
+  qualityPref = p;
+  try { localStorage.setItem('takraw-quality', p); } catch {}
+  qualityLevel = null;
+  applyQuality(p === 'auto' ? 'high' : p);
+  autoQ.cool = 3;
+}
+// Auto: average frame time over 2 s windows; step down below ~40 fps (never while loading)
+const autoQ = { t: 0, n: 0, cool: 3, fpsT: 0, fpsN: 0 };
+function autoQuality(dt) {
+  autoQ.fpsT += dt; autoQ.fpsN++;
+  if (autoQ.fpsT >= 0.5) {
+    const el = document.getElementById('hud-fps');
+    if (el) el.textContent = `${Math.round(autoQ.fpsN / autoQ.fpsT)} FPS`;
+    autoQ.fpsT = 0; autoQ.fpsN = 0;
+  }
+  if (qualityPref !== 'auto' || document.hidden) return;
+  if (autoQ.cool > 0) { autoQ.cool -= dt; autoQ.t = 0; autoQ.n = 0; return; }
+  autoQ.t += dt; autoQ.n++;
+  if (autoQ.t < 2) return;
+  const avg = autoQ.t / autoQ.n;
+  autoQ.t = 0; autoQ.n = 0;
+  const i = QUALITY_ORDER.indexOf(qualityLevel);
+  if (avg > 1 / 40 && i < QUALITY_ORDER.length - 1) { applyQuality(QUALITY_ORDER[i + 1]); autoQ.cool = 3; }
+}
+
+/* =====================================================================
    Lighting — "under the lights" on the river
    ===================================================================== */
 scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x20160e, 0.35));
@@ -245,7 +309,7 @@ function buildCourt() {
   // glossy painted floor
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(F.outX * 2, F.outZ * 2),
-    new THREE.MeshPhysicalMaterial({ map: null, roughness: 0.34, metalness: 0, clearcoat: 0.55, clearcoatRoughness: 0.22 })
+    new THREE.MeshStandardMaterial({ map: null, roughness: 0.3, metalness: 0 })   // glossy enough via env reflections, much cheaper than clearcoat
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = 0.001;
@@ -318,6 +382,7 @@ scene.add(buildCourt());
    Surroundings — promenade, LED boards (boundary), seating, lights
    ===================================================================== */
 const ledBoards = [];
+const spotLights = [];
 function ledTexture() {
   const c = document.createElement('canvas');
   c.width = 2048; c.height = 64;
@@ -450,6 +515,7 @@ function buildSurroundings() {
     }
     g.add(head);
     const spot = new THREE.SpotLight(0xfff0dc, 14, 40, 0.55, 0.7, 1.2);
+    spotLights.push(spot);
     spot.position.copy(head.position);
     spot.target.position.set(sx * 3, 0, sz * 1);
     g.add(spot, spot.target);
@@ -995,6 +1061,8 @@ const fx = (() => {
   function emit(x, y, z, { n = 10, color = 0xffffff, bright = 1.6, speed = 2.5, up = 1.5, spread = 1, life: L = 0.6, size: S = 0.09, g = 6 } = {}) {
     const pal = Array.isArray(color) ? color : null;
     if (!pal) C.set(color).multiplyScalar(bright);
+    n = Math.max(1, Math.round(n * QUALITY_PARTICLES()));
+    alive += n;
     for (let k = 0; k < n; k++) {
       if (pal) C.set(pal[(Math.random() * pal.length) | 0]).multiplyScalar(bright);
       const i = head; head = (head + 1) % MAX;
@@ -1016,9 +1084,13 @@ const fx = (() => {
     scene.add(m);
     rings.push({ m, t: 0, L, r });
   }
+  let alive = 0;
   function update(dt) {
+    if (alive === 0 && !rings.length) return;            // nothing on screen: no work, no GPU upload
+    let live = 0;
     for (let i = 0; i < MAX; i++) {
-      if (life[i] <= 0) { col[i * 4 + 3] = 0; continue; }
+      if (life[i] <= 0) { if (col[i * 4 + 3] !== 0) col[i * 4 + 3] = 0; continue; }
+      live++;
       life[i] -= dt;
       vel[i * 3 + 1] -= grav[i] * dt;
       pos[i * 3] += vel[i * 3] * dt; pos[i * 3 + 1] += vel[i * 3 + 1] * dt; pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
@@ -1026,6 +1098,7 @@ const fx = (() => {
       const k = Math.max(0, life[i] / maxLife[i]);
       col[i * 4] = base[i * 4]; col[i * 4 + 1] = base[i * 4 + 1]; col[i * 4 + 2] = base[i * 4 + 2]; col[i * 4 + 3] = k;
     }
+    alive = live;
     geo.attributes.position.needsUpdate = true;
     geo.attributes.color.needsUpdate = true;
     geo.attributes.size.needsUpdate = true;
@@ -1089,6 +1162,7 @@ const hist = [];
 let jQ = false, kQ = false, fQ = false;
 let cueArmed = true;
 let lastWhoosh = 0;
+let landingCache = null, landingDirty = true;   // ball flight is deterministic: predict once per change
 
 const isAuthority = () => mode !== 'guest';
 const decidesHalf = (half) => mode === 'solo' || (me && me.side === half);
@@ -1097,7 +1171,7 @@ const serveLocked = () => !!me && (match.phase === 'serve-wait' || match.phase =
 
 function setBall(b) {
   ball.x = b.x; ball.y = b.y; ball.z = b.z; ball.vx = b.vx; ball.vy = b.vy; ball.vz = b.vz;
-  hist.length = 0; pending = null; acc = 0; deadBall.on = false; approach = null; ballFire = false;
+  hist.length = 0; pending = null; acc = 0; deadBall.on = false; approach = null; ballFire = false; landingDirty = true;
 }
 const packBall = () => [ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz].map((v) => +v.toFixed(4));
 const unpackBall = (a) => ({ x: a[0], y: a[1], z: a[2], vx: a[3], vy: a[4], vz: a[5] });
@@ -1565,7 +1639,7 @@ function bodyCheck() {
   ball.x = me.pos.x + n.x * 0.3; ball.z = me.pos.z + n.z * 0.3;
   ball.vy = Math.abs(ball.vy) * 0.3 + 1.4;
   if (block) { ball.vx = Math.abs(ball.vx) * sideSign(me.side) * 0.6 + sideSign(me.side) * 1.5; }
-  hist.length = 0;
+  hist.length = 0; landingDirty = true;
   if (!block) {
     if (match.poss !== me.side) { match.poss = me.side; match.cnt = 0; }
     match.cnt++;
@@ -1600,12 +1674,13 @@ function handleEvent(e) {
   const pan = panOf(e.x, e.y, e.z);
   if (e.type === 'cross' || e.type === 'tape') {
     match.poss = P.sideOfX(ball.x); match.cnt = 0; match.settled = false;
-    if (e.type === 'tape') { sfx.tape(pan); fx.emit(e.x, e.y, e.z, { n: 8, color: 0xffffff, speed: 1.2, life: 0.4 }); }
+    if (e.type === 'tape') { landingDirty = true; sfx.tape(pan); fx.emit(e.x, e.y, e.z, { n: 8, color: 0xffffff, speed: 1.2, life: 0.4 }); }
     if (me && match.poss === me.side) cueArmed = true;
     renderMatchUI();
     return;
   }
   if (e.type === 'net') {
+    landingDirty = true;
     sfx.net(pan); shake(0.15);
     fx.emit(e.x, e.y, e.z, { n: 35, color: [0xdfe8ff, 0xffffff, 0x9fe0ff], bright: 1.8, speed: 2.4, up: 0.8, life: 0.5, size: 0.08 });
     fx.flash(e.x, e.y, e.z, { color: 0xdfe8ff, size: 1.4 });
@@ -1825,8 +1900,8 @@ function renderBall(dt) {
   // landing prediction
   landMark.visible = false;
   if (showLanding && ballLive) {
-    const r = P.simulate(ball, 3);
-    if (r.end) { landMark.visible = true; landMark.position.set(r.end.x, 0.01, r.end.z); }
+    if (landingDirty || !landingCache) { const r = P.simulate(ball, 4); landingCache = r.end; landingDirty = false; }
+    if (landingCache) { landMark.visible = true; landMark.position.set(landingCache.x, 0.01, landingCache.z); }
   }
   landMark.rotation.y += dt * 2;
 
@@ -2123,10 +2198,12 @@ function updateCamera() {
 /* =====================================================================
    Networking — PeerJS (WebRTC), no game server
    ===================================================================== */
-const PROTOCOL = 3;
+const PROTOCOL = 4;
 const PREFIX = 'takraw-iso-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 let peer = null, conn = null, sendTimer = null, pingTimer = null;
+let posConn = null;            // separate unreliable channel for 30 Hz positions (a late packet never blocks touches)
+let posSeq = 0, lastPosSeq = -1;
 let mode = null, myName = 'Player', roomCode = '';
 
 const $ = (id) => document.getElementById(id);
@@ -2167,6 +2244,7 @@ function startGame(side) {
   setMeterZones();
   resetAim();
   myMeter = 0; ballFire = false;
+  autoQ.cool = 3;
   if (me) me.dispose();
   me = createPlayer(side, myName);
   me.pos.copy(spawnPoint(side));
@@ -2191,6 +2269,19 @@ function spawnRemote(side, name) {
   setBoardNames();
 }
 
+function onRemoteState(msg) {
+  if (!them) return;
+  if (Number.isFinite(msg.q)) { if (msg.q <= lastPosSeq) return; lastPosSeq = msg.q; }   // drop out-of-order packets
+  const n = (v) => (Number.isFinite(v) ? v : 0);
+  them.target = { x: n(msg.x), z: n(msg.z), y: n(msg.y), r: n(msg.r), s: n(msg.s) };
+  if (Number.isFinite(msg.mt) && msg.mt !== them.meter) { them.meter = msg.mt; renderMeter(); }
+}
+function wirePos(c) {
+  posConn = c;
+  c.on('data', (msg) => { if (msg && msg.t === 's') onRemoteState(msg); });
+  c.on('close', () => { if (posConn === c) posConn = null; });
+  c.on('error', () => {});
+}
 function wireConnection(c) {
   conn = c;
   c.on('open', () => {
@@ -2199,10 +2290,13 @@ function wireConnection(c) {
     spawnRemote(mode === 'host' ? 'right' : 'left', 'Opponent');
     setStatus('');
     if (mode === 'host') resetMatch();
+    lastPosSeq = -1;
+    if (mode === 'guest' && peer) wirePos(peer.connect(PREFIX + roomCode, { reliable: false, serialization: 'json', label: 'pos' }));
     clearInterval(sendTimer); clearInterval(pingTimer);
     sendTimer = setInterval(() => {
       if (!me || !conn || !conn.open) return;
-      conn.send({ t: 's', mt: Math.round(myMeter), x: +me.pos.x.toFixed(3), z: +me.pos.z.toFixed(3), y: +me.y.toFixed(3),
+      const ch = posConn && posConn.open ? posConn : conn;
+      ch.send({ t: 's', q: posSeq++, mt: Math.round(myMeter), x: +me.pos.x.toFixed(3), z: +me.pos.z.toFixed(3), y: +me.y.toFixed(3),
         r: +me.facing.toFixed(3), s: +Math.hypot(me.vel.x, me.vel.z).toFixed(2) });
     }, 1000 / 30);
     pingTimer = setInterval(() => { if (conn && conn.open) conn.send({ t: 'ping', ts: performance.now() }); }, 1500);
@@ -2215,10 +2309,8 @@ function wireConnection(c) {
       them.setName(n);
       setBoardNames();
       if (msg.v !== PROTOCOL) setStatus('Opponent is on a different version — both of you refresh the page');
-    } else if (msg.t === 's' && them) {
-      const n = (v) => (Number.isFinite(v) ? v : 0);
-      them.target = { x: n(msg.x), z: n(msg.z), y: n(msg.y), r: n(msg.r), s: n(msg.s) };
-      if (Number.isFinite(msg.mt) && msg.mt !== them.meter) { them.meter = msg.mt; renderMeter(); }
+    } else if (msg.t === 's') {
+      onRemoteState(msg);
     } else if (msg.t === 'ping') {
       c.send({ t: 'pong', ts: msg.ts });
     } else if (msg.t === 'pong' && Number.isFinite(msg.ts)) {
@@ -2238,6 +2330,7 @@ function wireConnection(c) {
   c.on('close', () => {
     if (conn !== c) return;
     conn = null;
+    if (posConn) { try { posConn.close(); } catch {} posConn = null; }
     clearInterval(sendTimer); clearInterval(pingTimer);
     if (them) { them.dispose(); them = null; }
     setBoardNames();
@@ -2258,6 +2351,10 @@ function hostGame(attempt = 0) {
   peer = new Peer(PREFIX + roomCode);
   peer.on('open', () => { ui.waitStatus.textContent = 'Waiting for opponent to join…'; });
   peer.on('connection', (c) => {
+    if (c.label === 'pos') {                      // the guest's position channel
+      if (conn && conn.open && c.peer === conn.peer) wirePos(c); else c.on('open', () => c.close());
+      return;
+    }
     if (conn && conn.open) { c.on('open', () => c.close()); return; }
     wireConnection(c);
   });
@@ -2296,6 +2393,7 @@ function practice() {
 
 function teardown() {
   clearInterval(sendTimer); clearInterval(pingTimer);
+  if (posConn) { try { posConn.close(); } catch {} posConn = null; }
   if (conn) { try { conn.close(); } catch {} conn = null; }
   if (peer) { try { peer.destroy(); } catch {} peer = null; }
   if (me) { me.dispose(); me = null; }
@@ -2318,6 +2416,8 @@ $('rematch-btn').onclick = () => { if (isAuthority()) resetMatch(); };
 for (const b of document.querySelectorAll('[data-help]')) b.onclick = () => toggleHelp(true);
 $('howto-close').onclick = () => toggleHelp(false);
 $('opt-landing').checked = showLanding;
+$('opt-quality').value = qualityPref;
+$('opt-quality').onchange = (e) => setQualityPref(e.target.value);
 $('opt-sound').checked = !sfx.muted;
 $('opt-sound').onchange = (e) => setMuted(!e.target.checked);
 // buttons never keep keyboard focus (Space would re-click them mid-game)
@@ -2333,20 +2433,30 @@ ui.code.addEventListener('keydown', (e) => { if (e.key === 'Enter') joinGame(); 
 const params = new URLSearchParams(location.search);
 if (params.get('code')) ui.code.value = params.get('code').toUpperCase().slice(0, 4);
 
+applyQuality(qualityPref === 'auto' ? 'high' : qualityPref);
+
 // debug hook for automated testing
-window.__takraw = { get me() { return me; }, get them() { return them; }, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter };
+window.__takraw = { get me() { return me; }, get them() { return them; }, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }), gfx: { renderer, composer, bloom, focusPass, key, scene, THREE } };
 
 /* =====================================================================
    Loop
    ===================================================================== */
 const clock = new THREE.Clock();
+const PERF = new URLSearchParams(location.search).has('perf');
+const perf = { upd: 0, ren: 0, frame: 0, n: 0 };
+window.__perf = perf;
 function frame() {
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const dt = Math.min(clock.getDelta(), 0.1);   // up to 10 fps without slowing the game (physics sub-steps handle it)
+  const t0 = performance.now();
+  autoQuality(dt);
   if (playing) { updateLocal(dt); updateRemote(dt); updateBall(dt); }
   if (window.__takrawBot) window.__takrawBot(dt);   // test hook (unused in normal play)
   for (const t of ledBoards) t.offset.x = (t.offset.x + dt * 0.04) % 1;
   updateCamera(dt);
+  const t1 = performance.now();
   composer.render();
+  if (PERF) renderer.getContext().finish();   // profiling only: wait for the GPU so the timing is real
+  if (PERF) { const t2 = performance.now(); perf.upd += t1 - t0; perf.ren += t2 - t1; perf.frame += dt * 1000; perf.n++; }
   requestAnimationFrame(frame);
 }
 frame();
@@ -2355,5 +2465,5 @@ window.addEventListener('resize', () => {
   fitFov();
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
-  bloom.resolution.set(window.innerWidth / 2, window.innerHeight / 2);
+  autoQ.cool = 2;
 });

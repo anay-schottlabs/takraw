@@ -238,3 +238,7 @@ button { font-family: inherit; }
 .sb-meter { display: block; width: 46px; height: 4px; background: #1b1b20; position: relative; overflow: hidden; align-self: flex-end; margin-bottom: 4px; }
 .sb-meter b { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: linear-gradient(90deg, #f2b544, #ff5a1a); transition: width .25s; }
 @media (max-width: 640px) { .meter { width: 180px; } }
+
+/* graphics setting */
+.ht-select { background: #0f0f12; color: var(--text); border: 1px solid var(--line); font-family: var(--display); font-weight: 700; padding: 3px 6px; }
+.ht-dim { color: var(--muted); font-size: 12px; }
