@@ -1338,12 +1338,14 @@ const ballTint = new THREE.Color(0xffffff), _tc = new THREE.Color();
 // THEIR AIM: a red X on my court — only while the ball is theirs to play (gone the moment they hit it)
 const oppAimShadow = (() => {
   const g = new THREE.Group();
+  // a red diamond — same shape as your blue aim diamond, in their colour
   const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3b30).multiplyScalar(1.4), transparent: true, opacity: 0, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
-  for (const a of [Math.PI / 4, -Math.PI / 4]) {
-    const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.09), mat);
-    bar.rotation.x = -Math.PI / 2; bar.rotation.z = a; bar.renderOrder = 19;
-    g.add(bar);
-  }
+  const outMat = mat.clone();
+  const dia = (r, m) => { const sh = new THREE.Shape(); sh.moveTo(0, r); sh.lineTo(r, 0); sh.lineTo(0, -r); sh.lineTo(-r, 0); sh.closePath();
+    const mesh = new THREE.Mesh(new THREE.ShapeGeometry(sh), m); mesh.rotation.x = -Math.PI / 2; mesh.renderOrder = 19; return mesh; };
+  g.add(dia(0.26, outMat));
+  const fill = dia(0.16, mat); fill.position.y = 0.001; g.add(fill);
+  g.userData.outMat = outMat;
   g.position.y = 0.02;
   g.visible = false;
   g.userData.mat = mat;
@@ -1359,6 +1361,7 @@ function updateOppAim(dt) {
   const mat = oppAimShadow.userData.mat;
   mat.opacity += ((t && theirTurn ? 0.95 : 0) - mat.opacity) * Math.min(1, dt * 10);
   oppAimShadow.visible = mat.opacity > 0.02;
+  oppAimShadow.userData.outMat.opacity = mat.opacity * 0.55;
   if (t) {
     if (mat.opacity < 0.05) oppAimShadow.position.set(t.x, 0.02, t.z);
     else { oppAimShadow.position.x += (t.x - oppAimShadow.position.x) * Math.min(1, dt * 10); oppAimShadow.position.z += (t.z - oppAimShadow.position.z) * Math.min(1, dt * 10); }
@@ -1393,7 +1396,8 @@ const dropZone = (() => {
 function updateDropZone(dt) {
   const D = dropZone;
   const show = !!me && playing && ballLive && match.phase === 'rally' && !!landingCache;
-  D.ring.visible = D.line.visible = show;
+  D.ring.visible = show;
+  D.line.visible = false;                         // (no line from the ball — just the ring)
   if (!show) return;
   const Lc = landingCache;
   const out = Lc.type === 'board' || !P.inCourt(Lc.x, Lc.z);
@@ -1429,7 +1433,7 @@ function updateSideGlow(dt) {
     H.g.visible = !!me && playing;
     H.wash.material.blending = THREE.NormalBlending;
     H.wash.material.color.set(me && k === me.side ? 0x3d8bff : 0xff3b30);
-    H.wash.material.opacity = 0.07;                 // very, very slight
+    H.wash.material.opacity = me && k === me.side ? 0.14 : 0.42;   // match the scoreboard: your half blue, theirs red
     H.lineMat.opacity = 0;
   }
   ballHalo.material.opacity = 0;
@@ -1849,8 +1853,8 @@ function myBall() {
    ball crosses over you. Perfect = stuffed straight back down (brutal to return); good = deflected.  */
 const ATTACKS = new Set(['spike', 'smash', 'ult']);
 const isAttack = (part) => ATTACKS.has(part);
-const RX_R = 1.1;                         // be within this of the landing spot to dig
-const DIG_GREEN = 0.095, DIG_YELLOW = 0.2;   // dig green is a little more generous than the normal meter (0.075)  // dig meter: a much narrower green (and the needle always accelerates)
+const RX_R = 1.5;                         // be within this of the landing spot to dig (generous)
+const DIG_GREEN = 0.13, DIG_YELLOW = 0.26;   // green = clean dig, yellow = scrappy dig, beyond = their point   // dig green is a little more generous than the normal meter (0.075)  // dig meter: a much narrower green (and the needle always accelerates)
 const BLOCK_X = 0.85;                     // body centre this close to the net to block
 const BLOCK_PERFECT = 0.05 * BALL_TIME;   // ±50 ms (real time) around the ball crossing over you
 const BLOCK_GOOD = 0.1 * BALL_TIME;       // ±100 ms
@@ -1949,7 +1953,7 @@ function updateDigMeter() {
   $('tmf-marker').style.opacity = '1';
   $('tmf-marker').style.left = `${approach.needle * 100}%`;
   $('tmf-fill').style.width = `${approach.needle * 100}%`;
-  $('tmf-label').textContent = inGreen ? 'DIG!' : 'GREEN ONLY';
+  $('tmf-label').textContent = inGreen ? 'DIG!' : Math.abs(approach.needle - G_CENTER) <= DIG_YELLOW ? 'DIG' : 'J TO DIG';
   $('tmf-label').className = 'tmf-label ' + (inGreen ? 'perfect' : 'charge');
   $('tmf-part').textContent = '';
   floatT = 0.3;
@@ -1961,7 +1965,7 @@ function tapDig(kind) {
   const e = approach.needle - G_CENTER;
   approach.dead = true;
   me.charging = null;
-  if (Math.abs(e) > DIG_GREEN) {
+  if (Math.abs(e) > DIG_YELLOW) {
     me.action = { part: 'shank', t: 0 };
     showTiming(e, e < 0 ? 'EARLY' : 'LATE', null, 'missed the dig');
     sfx.miss();
@@ -1970,19 +1974,21 @@ function tapDig(kind) {
     return;
   }
   const tau = timeToDrop(0.9);
-  if (tau > 0.012 && Number.isFinite(tau)) pending = { kind: 'DIG', at: simTime + tau, err: Math.abs(e), early: e < 0, d: 0, charge: 1, aim: null, tier: 2 };
-  else doDig();
+  const clean = Math.abs(e) <= DIG_GREEN;
+  if (tau > 0.012 && Number.isFinite(tau)) pending = { kind: 'DIG', at: simTime + tau, err: Math.abs(e), early: e < 0, d: 0, charge: 1, aim: null, tier: clean ? 2 : 1 };
+  else doDig(clean ? 2 : 1);
 }
 
 // perfect dig: the ball pops (nearly) straight up over you like a set — a fresh turn for your side
-function doDig() {
+function doDig(tier = 2) {
   const s = sideSign(me.side);
   const from = { x: ball.x, y: Math.max(ball.y, 0.4), z: ball.z };
   const tg = {
     x: from.x + THREE.MathUtils.clamp(-s * 3.8 - from.x, -0.6, 0.6),   // drift a touch toward the middle of your half
     z: from.z + THREE.MathUtils.clamp(-from.z, -0.5, 0.5),
   };
-  setBall(P.solveApex(from, tg, 6.7, false));
+  if (tier < 2) { const [ox, oz] = jitter(1.4); tg.x += ox; tg.z += oz; }   // scrappy dig: lower and it drifts
+  setBall(P.solveApex(from, tg, tier < 2 ? 4.8 : 6.7, false));
   match.lastPart = 'dig';
   if (match.poss !== me.side) { match.poss = me.side; match.cnt = 0; }
   match.cnt++;
@@ -1991,11 +1997,11 @@ function doDig() {
   touchCd = 0.25;
   me.facing = s > 0 ? Math.PI / 2 : -Math.PI / 2;
   me.action = { part: 'chest', t: 0 };
-  setMeter(myMeter + 20);
-  showTiming(0, 'PERFECT', 'dig', 'dug it!');
-  contactJuice('dig', 'PERFECT', from, true);
+  setMeter(myMeter + (tier < 2 ? 5 : 20));
+  showTiming(0, tier < 2 ? 'GOOD' : 'PERFECT', 'dig', tier < 2 ? 'scrappy dig' : 'dug it!');
+  contactJuice('dig', tier < 2 ? 'GOOD' : 'PERFECT', from, true);
   sfx.touch(match.cnt);
-  sendTouch('dig', 'PERFECT');
+  sendTouch('dig', tier < 2 ? 'GOOD' : 'PERFECT');
   renderMatchUI();
 }
 
@@ -2198,7 +2204,7 @@ let ultPower = 0;
 function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = null) {
   pending = null;
   if (!ballLive) return;
-  if (kind === 'DIG') { doDig(); return; }
+  if (kind === 'DIG') { doDig(forcedTier ?? 2); return; }
   const s = sideSign(me.side);
   const hr = ball.y - me.y;
   const air = me.y > 0.12;
