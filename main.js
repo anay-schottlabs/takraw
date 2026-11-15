@@ -1432,9 +1432,11 @@ function flatRing(r0, r1, color, opacity) {
 }
 // predicted landing spot
 const landMark = new THREE.Group();
-landMark.add(flatRing(0.16, 0.22, new THREE.Color(0xffffff).multiplyScalar(1.4), 0.85));
-landMark.add(flatRing(0.0, 0.05, new THREE.Color(0xffffff).multiplyScalar(1.4), 0.85));
-landMark.position.y = 0.01;
+// where the ball will actually land: a clear white ring + dot, drawn above court tints and aim spots
+for (const m of [flatRing(0.3, 0.38, new THREE.Color(0xffffff).multiplyScalar(1.5), 0.95), flatRing(0.0, 0.08, new THREE.Color(0xffffff).multiplyScalar(1.5), 0.95), flatRing(0.38, 0.42, 0x000000, 0.5)]) {
+  m.material.depthTest = false; m.renderOrder = 20; landMark.add(m);
+}
+landMark.position.y = 0.02;
 landMark.visible = false;
 scene.add(landMark);
 
@@ -1487,7 +1489,7 @@ const aimArrow = (() => {   // (no longer shown — aiming uses the nine-spot do
 })();
 
 let showLanding = true;
-try { showLanding = localStorage.getItem('takraw-landing') !== '0'; } catch {}
+try { showLanding = localStorage.getItem('takraw-landing2') !== '0'; } catch {}   // (new key: back on for everyone)
 
 /* ---------------- particles, shockwaves, shake ---------------- */
 const fx = (() => {
@@ -1648,7 +1650,7 @@ function onActionKey(code) {
 }
 function setLanding(v) {
   showLanding = v;
-  try { localStorage.setItem('takraw-landing', v ? '1' : '0'); } catch {}
+  try { localStorage.setItem('takraw-landing2', v ? '1' : '0'); } catch {}
   const box = document.getElementById('opt-landing');
   if (box) box.checked = v;
 }
@@ -2684,7 +2686,7 @@ function renderBall(dt) {
   landMark.visible = false;
   if (ballLive) {
     if (landingDirty || !landingCache) { const r = P.simulate(ball, 4); landingCache = r.end; landingDirty = false; }
-    if (landingCache && showLanding) { landMark.visible = true; landMark.position.set(landingCache.x, 0.01, landingCache.z); }
+    if (landingCache && showLanding) { landMark.visible = true; landMark.position.set(landingCache.x, 0.02, landingCache.z); landMark.scale.setScalar(1 + Math.sin(performance.now() / 200) * 0.06); }
   }
   landMark.rotation.y += dt * 2;
   if (me) updateSmashMark();
