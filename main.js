@@ -1293,6 +1293,11 @@ const ballHalo = new THREE.Sprite(new THREE.SpriteMaterial({
 ballHalo.renderOrder = 24;
 ballHalo.scale.setScalar(1.6);
 ballMesh.add(ballHalo);
+// thin outline: a slightly bigger back-face shell in the side colour
+const ballOutline = new THREE.Mesh(ballMesh.geometry, new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide }));
+ballOutline.scale.setScalar(1.13);
+ballOutline.visible = false;
+ballMesh.add(ballOutline);
 
 /* ---------------- whose side is the ball on? Light up that half in its team colour ---------------- */
 const sideGlow = (() => {
@@ -1314,9 +1319,9 @@ const sideGlow = (() => {
       m.rotation.x = -Math.PI / 2; m.position.set(x, y, z);
       g.add(m);
     }
-    g.visible = false;                      // court halves no longer change colour
+    g.visible = false;
     scene.add(g);
-    halves[side] = { wash, lineMat, a: 0 };
+    halves[side] = { g, wash, lineMat, a: 0 };
   }
   return halves;
 })();
@@ -1329,13 +1334,20 @@ const ballTint = new THREE.Color(0xffffff), _tc = new THREE.Color();
 function updateSideGlow(dt) {
   const show = !!me && playing && (ballLive || match.phase === 'serve-wait' || match.phase === 'serve-toss');
   const side = show ? P.sideOfX(ball.x) : null;
-  for (const k of ['left', 'right']) { sideGlow[k].wash.material.opacity = 0; sideGlow[k].lineMat.opacity = 0; }
+  for (const k of ['left', 'right']) {
+    const H = sideGlow[k];
+    H.g.visible = !!me && playing;
+    H.wash.material.blending = THREE.NormalBlending;
+    H.wash.material.color.set(me && k === me.side ? 0x3d8bff : 0xff3b30);
+    H.wash.material.opacity = 0.07;                 // very, very slight
+    H.lineMat.opacity = 0;
+  }
   ballHalo.material.opacity = 0;
-  // the ball is BLUE on your side and RED on theirs (nothing else changes colour)
-  if (side) ballTint.set(side === me.side ? 0x3d8bff : 0xff3b30); else ballTint.set(0xffffff);
-  ballMesh.material.color.lerp(ballTint, Math.min(1, dt * 14));
-  ballMesh.material.emissive.lerp(_tc.copy(side ? ballTint : _tc.set(0x6a4200)).multiplyScalar(side ? 0.35 : 1), Math.min(1, dt * 14));
-  ballXray.material.color.copy(ballMesh.material.color).multiplyScalar(1.2);
+  // ball keeps its normal look; a thin outline is BLUE on your side and RED on theirs
+  ballMesh.material.color.set(0xffffff);
+  ballMesh.material.emissive.set(0x6a4200);
+  ballOutline.visible = !!side;
+  if (side) ballOutline.material.color.set(side === me.side ? 0x3d8bff : 0xff3b30).multiplyScalar(1.4);
   const chip = null;   // (the YOUR / THEIR BALL chip was removed — the ball colour says it)
   if (chip) {
     if (!side) chip.classList.add('hidden');
@@ -2972,6 +2984,7 @@ function showScreen(w) {
   ui.hud.classList.toggle('hidden', w !== 'game');
   ui.home.classList.toggle('hidden', w !== 'home');
   ui.wait.classList.toggle('hidden', w !== 'wait');
+  if (w === 'home') startLobbyBrowser(); else stopLobbyBrowser();   // only look for games while on the menu
 }
 function setStatus(s) { ui.status.textContent = s; }
 function setBoardNames() {
@@ -3086,6 +3099,102 @@ function wireConnection(c) {
   c.on('error', (e) => console.warn('conn error', e));
 }
 
+/* =====================================================================
+   LOBBY DISCOVERY — no server. A host also claims one of 12 well-known "lobby slot" IDs on the
+   PeerJS broker and answers anyone who knocks with { code, host name, open? }. The menu knocks on
+   all 12 slots every few seconds (empty slots fail instantly) and lists the 3 newest open games.
+   ===================================================================== */
+const LOBBY_PREFIX = 'takraw-lobby-v1-';
+const LOBBY_SLOTS = 12;
+let slotPeer = null, lobbyBorn = 0;
+function claimLobbySlot(i = 0) {
+  if (i >= LOBBY_SLOTS || mode !== 'host' || !peer) return;
+  const sp = new Peer(LOBBY_PREFIX + i);
+  slotPeer = sp;
+  sp.on('error', (e) => {
+    if (slotPeer !== sp) return;
+    if (e.type === 'unavailable-id') { try { sp.destroy(); } catch {} slotPeer = null; claimLobbySlot(i + 1); }
+  });
+  sp.on('connection', (c) => {
+    c.on('open', () => {
+      try { c.send({ t: 'lobby', v: PROTOCOL, code: roomCode, host: myName, open: !(conn && conn.open), born: lobbyBorn }); } catch {}
+      setTimeout(() => { try { c.close(); } catch {} }, 2000);
+    });
+  });
+}
+function releaseLobbySlot() { if (slotPeer) { const sp = slotPeer; slotPeer = null; try { sp.destroy(); } catch {} } }
+
+let probePeer = null, lobbyTimer = null, probing = false;
+const probeEnders = new Map();
+function startLobbyBrowser() {
+  if (lobbyTimer) return;
+  refreshLobbies();
+  lobbyTimer = setInterval(refreshLobbies, 8000);
+}
+function stopLobbyBrowser() {
+  clearInterval(lobbyTimer); lobbyTimer = null; probing = false; probeEnders.clear();
+  if (probePeer) { try { probePeer.destroy(); } catch {} probePeer = null; }
+}
+function refreshLobbies() {
+  if (probing) return;
+  const run = () => {
+    if (!probePeer || probePeer.destroyed) return;
+    probing = true;
+    const found = [];
+    let left = LOBBY_SLOTS;
+    const finish = () => { if (--left > 0) return; probing = false; renderLobbies(found); };
+    for (let i = 0; i < LOBBY_SLOTS; i++) {
+      const id = LOBBY_PREFIX + i;
+      let done = false;
+      const c = probePeer.connect(id, { reliable: true, serialization: 'json' });
+      const end = () => { if (done) return; done = true; probeEnders.delete(id); try { c.close(); } catch {} finish(); };
+      probeEnders.set(id, end);
+      c.on('data', (msg) => {
+        if (msg && msg.t === 'lobby' && msg.v === PROTOCOL && msg.open && /^[A-Z0-9]{4}$/.test(msg.code || '')) {
+          found.push({ code: msg.code, host: String(msg.host || 'Player').slice(0, 14), born: Number(msg.born) || 0 });
+        }
+        end();
+      });
+      c.on('error', end);
+      c.on('close', end);
+      setTimeout(end, 4500);
+    }
+  };
+  if (!probePeer || probePeer.destroyed) {
+    probePeer = new Peer();
+    probePeer.on('open', run);
+    probePeer.on('error', (e) => {
+      // an empty slot: PeerJS reports it on the peer, naming the id — end that probe right away
+      const m = /(takraw-lobby-v1-\d+)/.exec((e && e.message) || '');
+      if (m && probeEnders.has(m[1])) probeEnders.get(m[1])();
+    });
+  } else run();
+}
+function renderLobbies(list) {
+  const el = document.getElementById('lobby-list');
+  if (!el) return;
+  list.sort((a, b) => b.born - a.born);
+  const top = list.slice(0, 3);
+  el.textContent = '';
+  if (!top.length) {
+    const p = document.createElement('p');
+    p.className = 'lobby-empty';
+    p.textContent = 'No open games right now — create one!';
+    el.appendChild(p);
+    return;
+  }
+  for (const L of top) {
+    const row = document.createElement('div');
+    row.className = 'lobby-row';
+    const host = document.createElement('span'); host.className = 'lr-host'; host.textContent = L.host;
+    const code = document.createElement('span'); code.className = 'lr-code'; code.textContent = L.code;
+    const btn = document.createElement('button'); btn.className = 'btn outline lr-join'; btn.textContent = 'Join';
+    btn.onclick = () => { ui.code.value = L.code; joinGame(); };
+    row.append(host, code, btn);
+    el.appendChild(row);
+  }
+}
+
 function hostGame(attempt = 0) {
   readName(); showError('');
   mode = 'host';
@@ -3094,7 +3203,7 @@ function hostGame(attempt = 0) {
   ui.waitStatus.textContent = 'Connecting to matchmaking…';
   showScreen('wait');
   peer = new Peer(PREFIX + roomCode);
-  peer.on('open', () => { ui.waitStatus.textContent = 'Waiting for opponent to join…'; });
+  peer.on('open', () => { ui.waitStatus.textContent = 'Waiting for opponent to join…'; lobbyBorn = Date.now(); claimLobbySlot(0); });
   peer.on('connection', (c) => {
     if (c.label === 'pos') {                      // the guest's position channel
       if (conn && conn.open && c.peer === conn.peer) wirePos(c); else c.on('open', () => c.close());
@@ -3138,6 +3247,7 @@ function practice() {
 
 function teardown() {
   clearInterval(sendTimer); clearInterval(pingTimer);
+  releaseLobbySlot();
   if (posConn) { try { posConn.close(); } catch {} posConn = null; }
   if (conn) { try { conn.close(); } catch {} conn = null; }
   if (peer) { try { peer.destroy(); } catch {} peer = null; }
@@ -3181,6 +3291,8 @@ const params = new URLSearchParams(location.search);
 if (params.get('code')) ui.code.value = params.get('code').toUpperCase().slice(0, 4);
 
 applyQuality(qualityPref === 'auto' ? 'high' : qualityPref);
+startLobbyBrowser();
+document.getElementById('lobby-refresh').onclick = () => { const el = document.getElementById('lobby-list'); if (el && !probing) el.innerHTML = '<p class="lobby-empty">Looking for games…</p>'; refreshLobbies(); };
 
 // debug hook for automated testing
 window.__takraw = { get me() { return me; }, get them() { return them; }, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
