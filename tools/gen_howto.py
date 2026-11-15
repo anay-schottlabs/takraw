@@ -15,7 +15,7 @@ def text(x, y, s, fill=CREAM, size=13, anchor='middle', weight=700, cls=''):
 def keyboard():
     AIM = '#b48cff'
     out = []
-    hl = {'W': BLUE, 'A': BLUE, 'S': BLUE, 'D': BLUE, 'J': GOLD, 'K': ORANGE, 'L': BLOCK, 'F': '#c9a35a', 'H': '#9aa3b2', 'M': '#9aa3b2', 'N': '#9aa3b2'}
+    hl = {'W': BLUE, 'A': BLUE, 'S': BLUE, 'D': BLUE, 'J': GOLD, 'K': ORANGE, 'L': BLOCK, 'F': '#c9a35a', 'H': '#9aa3b2', 'N': '#9aa3b2'}
     rows = [('QWERTYUIOP', 40, 20), ('ASDFGHJKL', 55, 72), ('ZXCVBNM', 120, 124)]
     for keys, x0, y in rows:
         for i, k in enumerate(keys):
@@ -38,7 +38,7 @@ def keyboard():
         (GOLD, 'J', 'TAP on green to set / control'),
         (ORANGE, 'K', 'TAP on green to kick · in the air = clear / smash / spike'),
         ('#c9a35a', 'F', 'practice: ball machine feed'),
-        ('#9aa3b2', 'H · M · N', 'help · landing marker · sound'),
+        ('#9aa3b2', 'H · N', 'help · sound'),
     ]
     for i, (c, k, d) in enumerate(leg):
         y = 26 + i * 23
@@ -317,7 +317,7 @@ html = f'''<div id="howto" class="hidden">
         <h2>How to play</h2>
         <label class="ht-opt">Graphics <select id="opt-quality" class="ht-select"><option value="auto">Auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select> <span id="quality-now" class="ht-dim"></span></label>
         <label class="ht-opt"><input type="checkbox" id="opt-sound" /> Sound <span class="key sm">N</span></label>
-        <label class="ht-opt"><input type="checkbox" id="opt-landing" /> Landing marker <span class="key sm">M</span></label>
+        <input type="checkbox" id="opt-landing" hidden />
         <button id="howto-close" class="sq-btn" title="Close (Esc)">&#10005;</button>
       </div>
       <nav class="ht-tabs">{tabs}</nav>

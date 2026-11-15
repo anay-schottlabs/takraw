@@ -1333,14 +1333,14 @@ let lastBallSide = null;
 const ballTint = new THREE.Color(0xffffff), _tc = new THREE.Color();
 // their aim spot, shown on my court as a small soft shadow while they're about to hit
 const oppAimShadow = (() => {
-  const m = new THREE.Mesh(new THREE.CircleGeometry(0.75, 40), new THREE.MeshBasicMaterial({
+  const m = new THREE.Mesh(new THREE.CircleGeometry(0.58, 40), new THREE.MeshBasicMaterial({
     map: glowTexture(), color: 0xff3b30, transparent: true, opacity: 0, depthWrite: false,   // their colour (red, same as their side)
   }));
   m.rotation.x = -Math.PI / 2;
   m.position.y = 0.016;
   m.visible = false;
   // thin pulsing ring so it reads at a glance
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.7, 48), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3b30).multiplyScalar(1.4), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.48, 0.54, 48), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3b30).multiplyScalar(1.4), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
   ring.position.z = 0.002;
   m.add(ring);
   m.userData.ring = ring;
@@ -1348,8 +1348,10 @@ const oppAimShadow = (() => {
   return m;
 })();
 function updateOppAim(dt) {
-  const t = them && them.aim;
-  const theirTurn = !!them && playing && mode !== 'solo';   // their aim is always visible
+  // while their shot (or a practice feed) is in the air: where it will actually land; otherwise their aim spot
+  const theirShot = !!me && playing && ballLive && match.phase === 'rally' && match.last && match.last !== me.side && landingCache;
+  const t = theirShot ? landingCache : them && them.aim;
+  const theirTurn = theirShot || (!!them && playing && mode !== 'solo');   // their aim is always visible
   const target = t && theirTurn ? 0.75 : 0;
   const m = oppAimShadow.material;
   m.opacity += (target - m.opacity) * Math.min(1, dt * 6);
@@ -1646,7 +1648,6 @@ function onActionKey(code) {
   if (code === 'KeyK') kQ = true;      // start charging a kick
   if (code === 'KeyL') lQ = true;      // active block at the net
   if (code === 'KeyF') fQ = true;
-  if (code === 'KeyM') setLanding(!showLanding);
 }
 function setLanding(v) {
   showLanding = v;
@@ -1691,8 +1692,8 @@ function aimTarget(p) {
 // the dot + (briefly) all nine spots, drawn on their side only on your screen
 const aimDot = (() => {
   const g = new THREE.Group();
-  const dot = new THREE.Mesh(new THREE.CircleGeometry(0.16, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff).multiplyScalar(1.6), transparent: true, depthWrite: false }));
-  const ring = flatRing(0.28, 0.36, new THREE.Color(0xffd34d).multiplyScalar(1.6), 0.95);
+  const dot = new THREE.Mesh(new THREE.CircleGeometry(0.12, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff).multiplyScalar(1.6), transparent: true, depthWrite: false }));
+  const ring = flatRing(0.22, 0.28, new THREE.Color(0xffd34d).multiplyScalar(1.6), 0.95);
   dot.rotation.x = -Math.PI / 2;
   g.add(dot, ring);
   g.position.y = 0.018;
@@ -1713,8 +1714,12 @@ function updateAim(dt) {
   for (const sp of aimDot.spots) sp.m.visible = show && aimFlash > 0;
   if (!show) return;
   const s = sideSign(me.side);
-  const t = aimTarget(me);
-  aimDot.g.position.set(t.x, 0.018, t.z);
+  const myShot = ballLive && match.phase === 'rally' && match.last === me.side && landingCache;
+  const t = myShot ? landingCache : aimTarget(me);                  // in flight: where it will actually go
+  const k = Math.min(1, dt * 10);
+  aimDot.g.position.x += (t.x - aimDot.g.position.x) * k;
+  aimDot.g.position.z += (t.z - aimDot.g.position.z) * k;
+  aimDot.g.position.y = 0.018;
   aimDot.ring.scale.setScalar(1 + Math.sin(performance.now() / 170) * 0.08);
   for (const sp of aimDot.spots) {
     sp.m.position.set(s * AIM_ROWS[sp.r], 0.017, s * AIM_COLS[sp.c]);
@@ -2686,7 +2691,7 @@ function renderBall(dt) {
   landMark.visible = false;
   if (ballLive) {
     if (landingDirty || !landingCache) { const r = P.simulate(ball, 4); landingCache = r.end; landingDirty = false; }
-    if (landingCache && showLanding) { landMark.visible = true; landMark.position.set(landingCache.x, 0.02, landingCache.z); landMark.scale.setScalar(1 + Math.sin(performance.now() / 200) * 0.06); }
+    // (separate landing marker retired — the aim markers slide to the real landing spot instead)
   }
   landMark.rotation.y += dt * 2;
   if (me) updateSmashMark();
@@ -3347,6 +3352,7 @@ window.__takraw = { get me() { return me; }, get them() { return them; }, F, bal
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
   debugBlock: (stuffed = true) => blockedJuice({ x: 0, y: 1.7, z: 0.4 }, stuffed),
   outline: () => (ballOutline.visible ? '#' + ballOutline.material.color.getHexString() : null),
+  myDot: () => ({ x: +aimDot.g.position.x.toFixed(2), z: +aimDot.g.position.z.toFixed(2) }),
   oppAim: () => ({ visible: oppAimShadow.visible, opacity: +oppAimShadow.material.opacity.toFixed(2), x: +oppAimShadow.position.x.toFixed(2), z: +oppAimShadow.position.z.toFixed(2), sent: them && them.aim }), gfx: { renderer, composer, bloom, focusPass, key, scene, THREE } };
 
 /* =====================================================================
