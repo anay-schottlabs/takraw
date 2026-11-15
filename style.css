@@ -283,3 +283,7 @@ button { font-family: inherit; }
 
 /* no "who's serving" marker on the scoreboard */
 .srv { display: none !important; }
+
+/* scoreboard: you (blue) on the left, opponent (red) on the right */
+.sb-side.left .dot { background: #3d8bff !important; }
+.sb-side.right .dot { background: #ff3b30 !important; }

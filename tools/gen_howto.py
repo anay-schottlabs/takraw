@@ -72,8 +72,8 @@ def court():
     for sz in (-1, 1):
         o.append(f'<circle cx="{X(0)}" cy="{Z(sz*3.8)}" r="5" fill="{CREAM}"/>')
     # players
-    o.append(f'<circle cx="{X(-5.6)}" cy="{Z(0)}" r="9" fill="{ORANGE}" stroke="#fff" stroke-width="2"/>')
-    o.append(f'<circle cx="{X(5.6)}" cy="{Z(0.8)}" r="9" fill="{TEAL}" stroke="#fff" stroke-width="2"/>')
+    o.append(f'<circle cx="{X(-5.6)}" cy="{Z(0)}" r="9" fill="#3d8bff" stroke="#fff" stroke-width="2"/>')
+    o.append(f'<circle cx="{X(5.6)}" cy="{Z(0.8)}" r="9" fill="#ff3b30" stroke="#fff" stroke-width="2"/>')
     # labels
     o.append(text(X(-3.4), Z(-1.6), 'YOUR HALF', CREAM, 15, weight=800))
     o.append(text(X(3.4), Z(-1.6), 'OPPONENT', CREAM, 15, weight=800))

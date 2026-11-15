@@ -35,6 +35,9 @@ const NET_GAP = 0.18;           // closest a player's centre can get to the net 
 const TEAMS = {
   left:  { name: 'left',  jersey: 0xff8a2a, trim: 0xfff1dc, shorts: 0x15161b, css: '#ff8a2a' },
   right: { name: 'right', jersey: 0x2fd3c4, trim: 0x0d1f22, shorts: 0x15161b, css: '#2fd3c4' },
+  // colours are relative to the viewer: you are always blue, your opponent always red
+  me:  { name: 'me',  jersey: 0x3d8bff, trim: 0xf1f6ff, shorts: 0x15161b, css: '#3d8bff' },
+  opp: { name: 'opp', jersey: 0xff3b30, trim: 0xfff1ee, shorts: 0x15161b, css: '#ff3b30' },
 };
 const sideSign = (side) => (side === 'left' ? 1 : -1);
 
@@ -944,8 +947,8 @@ function numberTexture(num, team) {
   return t;
 }
 
-function createPlayer(side, name) {
-  const team = TEAMS[side];
+function createPlayer(side, name, teamKey = side) {
+  const team = TEAMS[teamKey];
   const root = new THREE.Group();      // world position
   const yaw = new THREE.Group();       // facing
   const body = new THREE.Group();      // lean + bob + jump height
@@ -1328,7 +1331,7 @@ const sideGlow = (() => {
 })();
 function teamColor(side) {
   const p = playerBySide(side);
-  return p ? p.team.jersey : TEAMS[side].jersey;
+  return p ? p.team.jersey : (me && side === me.side ? TEAMS.me.jersey : TEAMS.opp.jersey);
 }
 let lastBallSide = null;
 const ballTint = new THREE.Color(0xffffff), _tc = new THREE.Color();
@@ -2048,7 +2051,7 @@ function renderMeter() {
   document.getElementById('meter-state').textContent = myMeter >= METER_ULT_MIN ? 'ULTIMATE READY · jump + K' : 'perfects build it';
   if (me) {
     const theirs = them ? them.meter || 0 : 0;
-    const L = me.side === 'left' ? myMeter : theirs, R = me.side === 'left' ? theirs : myMeter;
+    const L = myMeter, R = theirs;   // yours on the left, always
     document.getElementById('sm-left').style.width = `${L}%`;
     document.getElementById('sm-right').style.width = `${R}%`;
   }
@@ -2851,8 +2854,9 @@ function sideName(side) {
 let lastServeAnnounce = -1;
 function renderMatchUI() {
   if (!me) return;
-  $('sc-left').textContent = match.score.left;
-  $('sc-right').textContent = match.score.right;
+  // your score is always on the left, theirs on the right
+  $('sc-left').textContent = match.score[me.side];
+  $('sc-right').textContent = match.score[other(me.side)];
   $('srv-left').classList.toggle('on', mode !== 'solo' && match.server === 'left');
   $('srv-right').classList.toggle('on', mode !== 'solo' && match.server === 'right');
   const mineCnt = match.poss === me.side && match.phase === 'rally' ? match.cnt : 0;
@@ -2894,7 +2898,7 @@ function onMatchChanged(phase) {
   if (phase === 'over' || (match.over && phase !== 'serve-wait' && phase !== 'point')) {
     const w = match.score.left > match.score.right ? 'left' : 'right';
     $('go-title').textContent = `${sideName(w)} wins`;
-    $('go-score').textContent = `${match.score.left} – ${match.score.right}`;
+    $('go-score').textContent = me ? `${match.score[me.side]} – ${match.score[other(me.side)]}` : `${match.score.left} – ${match.score.right}`;
     $('rematch-btn').classList.toggle('hidden', !isAuthority());
     $('go-wait').classList.toggle('hidden', isAuthority());
     if (over.classList.contains('hidden') && me && w === me.side) sfx.win();
@@ -3290,7 +3294,7 @@ function startGame(side) {
   myMeter = 0; ballFire = false;
   autoQ.cool = 3;
   if (me) me.dispose();
-  me = createPlayer(side, myName);
+  me = createPlayer(side, myName, 'me');
   me.pos.copy(spawnPoint(side));
   lastZone = '';
   ballLive = false; pending = null; frozenEnd = null; deadBall.on = false;
@@ -3306,7 +3310,7 @@ function startGame(side) {
 
 function spawnRemote(side, name) {
   if (them) them.dispose();
-  them = createPlayer(side, name);
+  them = createPlayer(side, name, 'opp');
   them.displayName = name;
   them.pos.copy(spawnPoint(side));
   them.target = { x: them.pos.x, z: them.pos.z, y: 0, r: them.facing, s: 0 };
