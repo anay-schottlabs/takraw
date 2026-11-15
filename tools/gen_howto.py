@@ -2,6 +2,7 @@
 import math, sys
 
 BLUE, GOLD, ORANGE, TEAL, CREAM, MUTED, LINE = '#5cb8f0', '#f2b544', '#ff8a2a', '#2fd3c4', '#f1ead9', '#8d8a82', '#2a2a31'
+BLOCK = '#ff5d73'
 COURT, FREE = '#2a74d6', '#114058'
 
 def svg(w, h, body, label):
@@ -14,7 +15,7 @@ def text(x, y, s, fill=CREAM, size=13, anchor='middle', weight=700, cls=''):
 def keyboard():
     AIM = '#b48cff'
     out = []
-    hl = {'W': BLUE, 'A': BLUE, 'S': BLUE, 'D': BLUE, 'J': GOLD, 'K': ORANGE, 'F': '#c9a35a', 'H': '#9aa3b2', 'M': '#9aa3b2', 'N': '#9aa3b2'}
+    hl = {'W': BLUE, 'A': BLUE, 'S': BLUE, 'D': BLUE, 'J': GOLD, 'K': ORANGE, 'L': BLOCK, 'F': '#c9a35a', 'H': '#9aa3b2', 'M': '#9aa3b2', 'N': '#9aa3b2'}
     rows = [('QWERTYUIOP', 40, 20), ('ASDFGHJKL', 55, 72), ('ZXCVBNM', 120, 124)]
     for keys, x0, y in rows:
         for i, k in enumerate(keys):
@@ -22,7 +23,7 @@ def keyboard():
             col = hl.get(k)
             out.append(f'<rect x="{x}" y="{y}" width="44" height="44" rx="4" fill="{col or "#1b1b20"}" stroke="{LINE}"/>')
             out.append(text(x + 22, y + 29, k, '#0d0d10' if col else '#55555c', 17, weight=800))
-    out.append(f'<rect x="20" y="124" width="94" height="44" rx="4" fill="{TEAL}"/>' + text(67, 153, 'SHIFT', '#0d0d10', 15, weight=800))
+    out.append(f'<rect x="20" y="124" width="94" height="44" rx="4" fill="#1b1b20" stroke="{LINE}"/>' + text(67, 153, 'SHIFT', '#55555c', 15, weight=800))   # no dash
     out.append(f'<rect x="170" y="176" width="270" height="40" rx="4" fill="{TEAL}"/>' + text(305, 202, 'SPACE', '#0d0d10', 15, weight=800))
     # arrow cluster
     for (x, y, g) in [(625, 124, '▲'), (575, 176, '◀'), (625, 176, '▼'), (675, 176, '▶')]:
@@ -32,7 +33,7 @@ def keyboard():
         (BLUE, 'W A S D', 'move (never aims)'),
         (AIM, '◀ ▶', 'move your aim dot left / right'),
         (AIM, '▲ ▼', 'move it deeper / shorter (combos = diagonal)'),
-        (TEAL, 'SHIFT', 'dash'),
+        (BLOCK, 'L', 'block at the net — press as their attack crosses over you'),
         (TEAL, 'SPACE', 'jump — for spikes and blocks'),
         (GOLD, 'J', 'TAP on green to set / control'),
         (ORANGE, 'K', 'TAP on green to kick · in the air = clear / smash / spike'),
@@ -286,7 +287,7 @@ def serving():
     return svg(980, 270, ''.join(o), 'Serve steps')
 
 pages = [
-    ('controls', 'Controls', keyboard(), '<p>WASD moves. When the meter pops up, tap J (set) or K (kick) on green. The arrow keys are optional aiming. You never pick the body part — the game uses foot, knee, chest or head depending on how high the ball is when you touch it.</p>'),
+    ('controls', 'Controls', keyboard(), '<p>WASD moves. When the meter pops up, tap J (set) or K (kick) on green. At the net, L blocks their attack as it crosses. The arrow keys are optional aiming. You never pick the body part — the game uses foot, knee, chest or head depending on how high the ball is when you touch it.</p>'),
     ('court', 'The court', court(), '<p>Official ISTAF court. You stay on your half; the LED boards are the outer wall. The glow ring at your feet shows where you are: <b class="c-team">team colour</b> in court, <b class="c-gold">gold</b> in the free zone, <b class="c-blue">blue</b> in your service circle.</p>'),
     ('touches', '3 touches', touches(), '<p>You get <b>up to 3 touches</b> before the ball must go over — and you can take all three yourself. Sending it straight back with K is safe but slow and loopy. J pops the ball up HIGH and out into open space (← → pick the side) — move under it. Passing to yourself (J, J) lets you hit flatter and harder, and a <b>spike</b> (jump near the net, K at the top) is the fastest shot in the game. Hard balls are hard to kick cleanly: <b>control them with J first</b> — a J that digs a smash pops the ball <b>way</b> up. Jump kicks work on any touch: off your own set it’s a <b>spike</b>, straight off their clear it’s a <b>smash</b>, otherwise it’s a high, soft <b>clear</b> they can easily return.</p>'),
     ('reach', 'Reach', reach(), '<p>You can play the ball when it is within about a metre of you. The touch is judged by height: low balls on the inside of the foot give the cleanest control. A <b>spike</b> needs you airborne, close to the net (within ~3 m) and the ball above ~1.7 m.</p>'),
@@ -302,8 +303,9 @@ pages = [
       <div class="rule"><span class="rb lose">WIDE</span><div><b>Over the net outside the side tapes</b><small>the ball must cross between the white tapes</small></div></div>
       <div class="rule"><span class="rb lose">4</span><div><b>A fourth touch</b><small>3 touches max per side — body touches count too</small></div></div>
       <div class="rule"><span class="rb lose">FOOT</span><div><b>Serving outside your circle</b><small>or tossing and not kicking</small></div></div>
-      <div class="rule"><span class="rb info">11</span><div><b>First to 11, win by 2</b><small>capped at 15 · every rally scores a point</small></div></div>
-      <div class="rule"><span class="rb info">BLK</span><div><b>Blocks are free</b><small>jumping at the net and letting it bounce off you doesn’t use a touch</small></div></div>
+      <div class="rule"><span class="rb info">7</span><div><b>First to 7 wins</b><small>every rally scores a point</small></div></div>
+      <div class="rule"><span class="rb info">BLK</span><div><b>Blocks are free</b><small>at the net, jump + L right as their attack crosses: perfect stuffs it back down · a block never uses a touch</small></div></div>
+      <div class="rule"><span class="rb lose">DIG</span><div><b>Their smash: get to the red mark</b><small>stand in it and dig on GREEN — anything else is their point</small></div></div>
     </div>'''),
 ]
 

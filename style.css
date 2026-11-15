@@ -242,3 +242,12 @@ button { font-family: inherit; }
 /* graphics setting */
 .ht-select { background: #0f0f12; color: var(--text); border: 1px solid var(--line); font-family: var(--display); font-weight: 700; padding: 3px 6px; }
 .ht-dim { color: var(--muted); font-size: 12px; }
+/* full spin meter: "POP ULT" flashes across the bar */
+.meter-pop { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; z-index: 2;
+  font-family: var(--display); font-weight: 800; font-size: 13px; letter-spacing: 4px; color: #fff;
+  text-shadow: 0 0 6px #ff5a1a, 0 0 2px #000, 0 1px 2px #000; }
+.meter.full .meter-pop { display: flex; animation: popult .45s steps(1, end) infinite; }
+@keyframes popult { 0% { opacity: 1; } 50% { opacity: .15; } }
+/* block feedback */
+.tmf-label.no-block, .tmf-label.missed-block, .tmf-label.early-block, .tmf-label.late-block { color: var(--orange); font-size: 20px; }
+.key.block { background: #ff5d73; }

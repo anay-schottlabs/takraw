@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -28,7 +28,6 @@ F.outX = F.hl + F.free;          // 10.70 — ad boards (hard boundary)
 F.outZ = F.hw + F.free;          // 6.50
 F.postZ = F.hw + F.postOut;      // 3.35
 
-const SKY_ROT = -0.11;
 const PLAYER_R = 0.24;          // body radius for collisions
 const RING_GLOW = 2.6;           // >1 so the bloom pass picks the ring up
 const NET_GAP = 0.18;           // closest a player's centre can get to the net plane
@@ -145,15 +144,18 @@ function autoQuality(dt) {
 }
 
 /* =====================================================================
-   Lighting — "under the lights" on the river
+   Lighting — temple courtyard at dusk
+   The last warm light rakes in low from the +z side, so both players see
+   long shadows across the court and the sunset glow off to one side.
    ===================================================================== */
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x20160e, 0.35));
+scene.add(new THREE.HemisphereLight(0x9d8cd0, 0x4a2a1c, 0.5));
 
-const key = new THREE.DirectionalLight(0xfff4e6, 1.6);
-key.position.set(5, 20, 7);
+const key = new THREE.DirectionalLight(0xffb27a, 1.9);
+key.position.set(4, 11, 19);                      // ~30° up, from the +z sideline
 key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048);
-Object.assign(key.shadow.camera, { left: -13, right: 13, top: 11, bottom: -11, near: 2, far: 45 });
+// fitted to the court + free zone as seen from the light (low sun → wide, short frustum)
+Object.assign(key.shadow.camera, { left: -12.8, right: 12.8, top: 8, bottom: -5.5, near: 5, far: 40 });
 key.shadow.bias = -0.0004;
 key.shadow.normalBias = 0.02;
 scene.add(key);
@@ -169,42 +171,144 @@ manager.onError = (u) => { console.warn('asset failed', u); };
 const texLoader = new THREE.TextureLoader(manager);
 const pmrem = new THREE.PMREMGenerator(renderer);
 
-// Image-based lighting + reflections for the glossy court
-new RGBELoader(manager).load('assets/sky/shanghai_bund_1k.hdr', (hdr) => {
-  hdr.mapping = THREE.EquirectangularReflectionMapping;
-  const env = pmrem.fromEquirectangular(hdr).texture;
-  scene.environment = env;
-  scene.environmentIntensity = 0.55;
-  scene.environmentRotation.set(0, SKY_ROT, 0);
-  hdr.dispose();
-});
+/* ---------------------------------------------------------------------
+   Dusk sky — painted once into an equirectangular canvas (no download).
+   The same image is the backdrop and, pre-filtered, the environment light.
+   Canvas row 0 = zenith, middle row = horizon; column u ↔ azimuth atan2(z, x).
+   --------------------------------------------------------------------- */
+const SUN_AZ = Math.atan2(key.position.z, key.position.x);   // sun has just set behind the +z gallery
+function paintSky() {
+  const W = 2048, H = 1024, w = 512, h = 256;
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const mix = (A, B, t) => [lerp(A[0], B[0], t), lerp(A[1], B[1], t), lerp(A[2], B[2], t)];
+  // elevation stops (0 = horizon, 1 = zenith): toward the sun / away from it
+  const NEAR = [[0, [255, 160, 104]], [0.04, [236, 126, 112]], [0.13, [150, 78, 132]], [0.36, [60, 46, 106]], [1, [18, 24, 58]]];
+  const FAR = [[0, [168, 104, 146]], [0.04, [146, 88, 140]], [0.13, [96, 62, 124]], [0.36, [46, 40, 96]], [1, [18, 24, 58]]];
+  const ramp = (S, t) => {
+    for (let i = 1; i < S.length; i++) if (t <= S[i][0]) return mix(S[i - 1][1], S[i][1], (t - S[i - 1][0]) / (S[i][0] - S[i - 1][0]));
+    return S[S.length - 1][1];
+  };
+  const sx = Math.cos(SUN_AZ), sz = Math.sin(SUN_AZ), sy = -0.035;
+  const lo = document.createElement('canvas');
+  lo.width = w; lo.height = h;
+  const lg = lo.getContext('2d');
+  const img = lg.createImageData(w, h);
+  const skyAt = [];                                     // low-res colours, reused for the moon's shadow
+  for (let j = 0; j < h; j++) {
+    const e = (0.5 - (j + 0.5) / h) * Math.PI;
+    const ce = Math.cos(e), se = Math.sin(e);
+    for (let i = 0; i < w; i++) {
+      const phi = ((i + 0.5) / w - 0.5) * Math.PI * 2;
+      const dx = ce * Math.cos(phi), dz = ce * Math.sin(phi);
+      const cosSun = Math.max(-1, Math.min(1, dx * sx + se * sy + dz * sz));
+      let c;
+      if (e < 0) c = [18, 13, 24];
+      else {
+        const t = e / (Math.PI / 2);
+        const toward = Math.pow((cosSun + 1) / 2, 1.6);
+        c = mix(ramp(FAR, t), ramp(NEAR, t), toward);
+        const a = Math.acos(cosSun);
+        const glow = (0.75 * Math.exp(-((a / 0.32) ** 2)) + 0.3 * Math.exp(-((a / 0.95) ** 2))) * (1 - t) ** 2.2;
+        c = [c[0] + 255 * glow, c[1] + 168 * glow, c[2] + 92 * glow];
+      }
+      const k = (j * w + i) * 4;
+      img.data[k] = Math.min(255, c[0]); img.data[k + 1] = Math.min(255, c[1]); img.data[k + 2] = Math.min(255, c[2]); img.data[k + 3] = 255;
+      skyAt[j * w + i] = c;
+    }
+  }
+  lg.putImageData(img, 0, 0);
 
-// Night skyline backdrop. The concrete promenade fades into the photo's own boardwalk.
-texLoader.load('assets/sky/shanghai_bund_bg.jpg', (src) => {
-  // Paint out the photo's promenade (people would look giant next to the court):
-  // everything below the horizon fades into dark river water.
-  const img = src.image;
   const c = document.createElement('canvas');
-  c.width = img.width; c.height = img.height;
+  c.width = W; c.height = H;
   const g = c.getContext('2d');
-  g.filter = 'saturate(0.4) brightness(0.62)';   // skyline is backdrop, not focus
-  g.drawImage(img, 0, 0);
-  g.filter = 'none';
-  const h = c.height, top = h * 0.487, full = h * 0.512;
-  const grad = g.createLinearGradient(0, top, 0, full);
-  grad.addColorStop(0, 'rgba(9,12,20,0)');
-  grad.addColorStop(1, 'rgba(9,12,20,1)');
-  g.fillStyle = grad; g.fillRect(0, top, c.width, full - top);
-  g.fillStyle = '#090c14'; g.fillRect(0, full, c.width, h - full);
-  src.dispose();
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.mapping = THREE.EquirectangularReflectionMapping;
-  scene.background = tex;
-  scene.backgroundIntensity = 0.9;
-  // skyline beyond the +x baseline (left player's view), the lit Bund buildings beyond -x
-  scene.backgroundRotation.set(0, SKY_ROT, 0);
-});
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  g.drawImage(lo, 0, 0, W, H);
+  const PX = H / 180;                                   // pixels per degree
+  const X = (phi) => ((phi / (Math.PI * 2) + 0.5) % 1 + 1) % 1 * W;
+  const Y = (deg) => H / 2 - deg * PX;
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+
+  // stars — only up where the sky has gone dark, fewer toward the sunset
+  for (let i = 0; i < 520; i++) {
+    const deg = 14 + Math.pow(rnd(), 0.7) * 62, phi = (rnd() - 0.5) * Math.PI * 2;
+    const away = (1 - Math.cos(phi - SUN_AZ)) / 2;
+    const a = rnd() * Math.min(1, (deg - 14) / 22) * (0.25 + 0.75 * away);
+    if (a < 0.08) continue;
+    const s = rnd() < 0.1 ? 2.2 : 1.4;
+    g.fillStyle = `rgba(255,246,232,${a.toFixed(3)})`;
+    g.fillRect(X(phi), Y(deg), s / Math.cos(deg * Math.PI / 180), s);
+  }
+
+  // thin streaks of cloud low on the horizon, lit peach toward the sun, mauve away from it
+  for (let i = 0; i < 16; i++) {
+    const phi = (rnd() - 0.5) * Math.PI * 2, deg = 4 + rnd() * 12;
+    const toward = (1 + Math.cos(phi - SUN_AZ)) / 2;
+    const col = toward > 0.6 ? '255,178,138' : toward > 0.3 ? '214,130,150' : '120,84,140';
+    const wpx = (18 + rnd() * 30) * PX, hpx = (0.8 + rnd() * 1.6) * PX;
+    for (const off of [-W, 0, W]) {
+      g.save();
+      g.translate(X(phi) + off, Y(deg));
+      g.scale(wpx / hpx, 1);
+      const rg = g.createRadialGradient(0, 0, 0, 0, 0, hpx);
+      rg.addColorStop(0, `rgba(${col},${(0.35 + toward * 0.3).toFixed(2)})`);
+      rg.addColorStop(1, `rgba(${col},0)`);
+      g.fillStyle = rg;
+      g.beginPath(); g.arc(0, 0, hpx, 0, Math.PI * 2); g.fill();
+      g.restore();
+    }
+  }
+
+  // crescent moon, high on the side away from the sunset
+  {
+    const phi = SUN_AZ + Math.PI - 0.55, deg = 24, r = 1.3 * PX;
+    const mx = X(phi), my = Y(deg), stretch = 1 / Math.cos(deg * Math.PI / 180);
+    g.save();
+    g.translate(mx, my); g.scale(stretch, 1);
+    const halo = g.createRadialGradient(0, 0, r, 0, 0, r * 7);
+    halo.addColorStop(0, 'rgba(255,240,214,0.28)'); halo.addColorStop(1, 'rgba(255,240,214,0)');
+    g.fillStyle = halo; g.beginPath(); g.arc(0, 0, r * 7, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#fff3dc'; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
+    const sc = skyAt[Math.min(h - 1, Math.floor(my / H * h)) * w + Math.floor(mx / W * w)] || [40, 36, 90];
+    g.fillStyle = `rgb(${sc.map((v) => Math.round(Math.min(255, v))).join(',')})`;
+    g.beginPath(); g.arc(r * 0.55, -r * 0.2, r * 0.92, 0, Math.PI * 2); g.fill();   // lit limb faces the set sun
+    g.restore();
+  }
+
+  // distant tree line (and a few far-off spires) along the whole horizon, just over the courtyard walls
+  g.fillStyle = '#1c1428';
+  g.beginPath();
+  g.moveTo(0, Y(-4));
+  const p1 = rnd() * 6, p2 = rnd() * 6;
+  for (let x = 0; x <= W; x += 3) {
+    const t = (x / W) * Math.PI * 2;
+    let d = 1.6 + 0.9 * Math.sin(t * 7 + p1) + 0.5 * Math.sin(t * 19 + p2) + 0.35 * Math.sin(t * 53);
+    d += Math.max(0, Math.sin(t * 97 + p1 * 3)) * 0.9;   // individual crowns
+    g.lineTo(x, Y(Math.max(0.4, d)));
+  }
+  g.lineTo(W, Y(-4));
+  g.closePath();
+  g.fill();
+  for (const az of [0.4, 1.15, 2.6, 3.4, 4.3, 5.6]) {      // slender spires on far temples
+    const x = (az / (Math.PI * 2)) * W, base = Y(2.2), tip = Y(5.5 + (az % 1) * 2.5);
+    g.beginPath(); g.moveTo(x - 0.9 * PX, base); g.lineTo(x, tip); g.lineTo(x + 0.9 * PX, base); g.closePath(); g.fill();
+    g.fillRect(x - 1.6 * PX, base, 3.2 * PX, Y(-1) - base);
+  }
+  g.fillStyle = '#120d18';
+  g.fillRect(0, Y(-4) - 1, W, H - Y(-4) + 1);
+  return c;
+}
+{
+  const sky = new THREE.CanvasTexture(paintSky());
+  sky.colorSpace = THREE.SRGBColorSpace;
+  sky.mapping = THREE.EquirectangularReflectionMapping;
+  scene.background = sky;
+  scene.backgroundIntensity = 1.1;
+  scene.environment = pmrem.fromEquirectangular(sky).texture;   // glossy court reflects the dusk sky
+  scene.environmentIntensity = 0.7;
+}
+// a little dusk haze so the far halls and spires sit back in the air
+scene.fog = new THREE.Fog(0x7a5274, 26, 150);
 
 /* =====================================================================
    Court floor — one painted texture for the court + free zone
@@ -223,7 +327,7 @@ function paintCourt() {
 
   // free zone
   const fz = g.createLinearGradient(0, 0, 0, H);
-  fz.addColorStop(0, '#0d3247'); fz.addColorStop(0.5, '#114058'); fz.addColorStop(1, '#0d3247');
+  fz.addColorStop(0, '#4a1d1a'); fz.addColorStop(0.5, '#5e2620'); fz.addColorStop(1, '#4a1d1a');   // dark terracotta lacquer
   g.fillStyle = fz; g.fillRect(0, 0, W, H);
 
   // subtle panel seams in the free zone (sport-tile look)
@@ -256,9 +360,9 @@ function paintCourt() {
   g.fillStyle = 'rgba(241,234,217,0.10)';
   g.font = `800 ${M(0.55)}px "Barlow Condensed", "Arial Narrow", sans-serif`;
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText('RIVERSIDE  ·  SEPAK TAKRAW', X(0), Z(F.hw + 1.4));
+  g.fillText('TEMPLE COURT  ·  SEPAK TAKRAW', X(0), Z(F.hw + 1.4));
   g.translate(X(0), Z(-F.hw - 1.4)); g.rotate(Math.PI);
-  g.fillText('RIVERSIDE  ·  SEPAK TAKRAW', 0, 0);
+  g.fillText('TEMPLE COURT  ·  SEPAK TAKRAW', 0, 0);
   g.restore();
 
   // lines (white, 4 cm, inside the court dimensions)
@@ -300,7 +404,7 @@ function buildCourt() {
   // raised deck
   const deck = new THREE.Mesh(
     new THREE.BoxGeometry(F.outX * 2 + 0.8, F.deckDrop, F.outZ * 2 + 0.8),
-    new THREE.MeshStandardMaterial({ color: 0x1a1d24, roughness: 0.8 })
+    new THREE.MeshStandardMaterial({ color: 0x6a5644, roughness: 0.85 })
   );
   deck.position.y = -F.deckDrop / 2;
   deck.receiveShadow = true;
@@ -379,174 +483,425 @@ function buildCourt() {
 scene.add(buildCourt());
 
 /* =====================================================================
-   Surroundings — promenade, LED boards (boundary), seating, lights
+   Surroundings — temple courtyard at dusk
+   Ordination halls close both ends (the backdrop behind each opponent),
+   cloister galleries run down both sides, chedis stand in the corners,
+   frangipani trees and lanterns fill the gaps. The low lacquered
+   balustrade at the free-zone edge is the hard boundary (physics boardH).
+
+   Performance: every static piece is merged into ONE mesh per material
+   (≈8 draw calls for all the architecture), trees and lanterns are
+   instanced, nothing out here casts a shadow, and matrices are frozen.
    ===================================================================== */
-const ledBoards = [];
 const spotLights = [];
-function ledTexture() {
+
+// Transformed, non-indexed copy of a geometry, so any two pieces can be merged.
+const _xf = new THREE.Object3D();
+function xf(geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) {
+  _xf.position.set(x, y, z); _xf.rotation.set(rx, ry, rz); _xf.scale.set(1, 1, 1); _xf.updateMatrix();
+  const g = geo.index ? geo.toNonIndexed() : geo.clone();
+  return g.applyMatrix4(_xf.matrix);
+}
+// Collects pieces per material and merges them into one mesh each.
+function makeBatch() {
+  const lists = new Map();
+  return {
+    put(mat, geo) { if (!lists.has(mat)) lists.set(mat, []); lists.get(mat).push(geo); },
+    build(parent, { castShadow = false, receiveShadow = false } = {}) {
+      for (const [mat, gs] of lists) {
+        const m = new THREE.Mesh(mergeGeometries(gs), mat);
+        for (const g of gs) g.dispose();
+        m.castShadow = castShadow; m.receiveShadow = receiveShadow;
+        parent.add(m);
+      }
+      lists.clear();
+    },
+  };
+}
+// Flat polygon (3 or 4 corners) with explicit UVs. Used with double-sided materials.
+function poly(pts, uvs) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts.flat(), 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs.flat(), 2));
+  g.setIndex(pts.length === 4 ? [0, 1, 2, 0, 2, 3] : [0, 1, 2]);
+  g.computeVertexNormals();
+  return g;
+}
+// One roof plane running x0 → x1, from the eave line (z = ze, y = ye) up to (z = zr, y = yr).
+// UVs are in metres / tile so the tile rows run parallel to the ridge.
+function slope(x0, x1, ze, ye, zr, yr, tile = 2) {
+  const L = Math.hypot(zr - ze, yr - ye) / tile;
+  return poly([[x0, ye, ze], [x1, ye, ze], [x1, yr, zr], [x0, yr, zr]],
+    [[x0 / tile, 0], [x1 / tile, 0], [x1 / tile, L], [x0 / tile, L]]);
+}
+
+function ornamentTexture() {            // gold lattice + flame rosettes on red: gable pediments
   const c = document.createElement('canvas');
-  c.width = 2048; c.height = 64;
+  c.width = c.height = 256;
   const g = c.getContext('2d');
-  const segs = [
-    ['TAKRAW', '#5cb8f0', '#0b1622'], ['ISO 3D', '#f2b544', '#1a1306'],
-    ['RIVERSIDE OPEN', '#f1ead9', '#14161c'], ['NO HANDS', '#ff8a2a', '#1d0f05'],
-  ];
-  const w = c.width / segs.length;
-  segs.forEach(([t, fg, bg], i) => {
-    g.fillStyle = bg; g.fillRect(i * w, 0, w, 64);
-    g.fillStyle = fg; g.font = '800 44px "Barlow Condensed", "Arial Narrow", sans-serif';
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(t, i * w + w / 2, 34);
-  });
+  g.fillStyle = '#7a1912'; g.fillRect(0, 0, 256, 256);
+  g.strokeStyle = '#e3b456'; g.lineWidth = 6;
+  for (let i = -256; i <= 512; i += 128) {
+    g.beginPath(); g.moveTo(i, 0); g.lineTo(i + 256, 256); g.stroke();
+    g.beginPath(); g.moveTo(i, 256); g.lineTo(i + 256, 0); g.stroke();
+  }
+  const rosette = (x, y, r) => {
+    g.fillStyle = '#e3b456';
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      g.beginPath();
+      g.ellipse(x + Math.cos(a) * r * 0.55, y + Math.sin(a) * r * 0.55, r * 0.42, r * 0.16, a, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.fillStyle = '#f6d58a';
+    g.beginPath(); g.arc(x, y, r * 0.3, 0, Math.PI * 2); g.fill();
+  };
+  for (const [x, y] of [[0, 0], [256, 0], [0, 256], [256, 256], [128, 128]]) rosette(x, y, 38);
+  for (const [x, y] of [[128, 0], [128, 256], [0, 128], [256, 128]]) rosette(x, y, 22);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 4;
+  return t;
+}
+
+function panelTexture() {               // lotus-petal frieze for the balustrade's inner face
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = '#6e1610'; g.fillRect(0, 0, 512, 64);
+  g.fillStyle = '#d9a64c'; g.fillRect(0, 3, 512, 4); g.fillRect(0, 57, 512, 4);
+  for (let x = 32; x < 512; x += 64) {
+    g.fillStyle = '#d9a64c';
+    g.beginPath(); g.moveTo(x - 24, 52); g.quadraticCurveTo(x - 24, 22, x, 11); g.quadraticCurveTo(x + 24, 22, x + 24, 52); g.closePath(); g.fill();
+    g.fillStyle = '#6e1610';
+    g.beginPath(); g.moveTo(x - 14, 52); g.quadraticCurveTo(x - 14, 30, x, 22); g.quadraticCurveTo(x + 14, 30, x + 14, 52); g.closePath(); g.fill();
+    g.fillStyle = '#f2cf7c';
+    g.beginPath(); g.arc(x, 42, 4, 0, Math.PI * 2); g.fill();
+  }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = THREE.RepeatWrapping;
+  t.anisotropy = 8;
   return t;
+}
+
+function poolTexture() {                // soft warm light pool painted on the paving
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
 }
 
 function buildSurroundings() {
   const g = new THREE.Group();
-  const y0 = -F.deckDrop;
-
-  // concrete promenade that fades into the projected sky ground
-  const concrete = (name, color) => {
-    const t = texLoader.load(`assets/concrete/concrete_${name}_1k.jpg`);
+  const y0 = -F.deckDrop;                       // courtyard paving level (the court deck is raised)
+  const loadTex = (name, srgb = false) => {
+    const t = texLoader.load(`assets/temple/${name}`);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(14, 14);
-    if (color) t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
     return t;
   };
-  const fade = document.createElement('canvas');
-  fade.width = fade.height = 256;
-  const fg = fade.getContext('2d');
-  const rg = fg.createRadialGradient(128, 128, 60, 128, 128, 128);
-  rg.addColorStop(0, '#fff'); rg.addColorStop(1, '#000');
-  fg.fillStyle = rg; fg.fillRect(0, 0, 256, 256);
-  const plaza = new THREE.Mesh(
-    new THREE.CircleGeometry(40, 64),
-    new THREE.MeshStandardMaterial({
-      map: concrete('diff', true), normalMap: concrete('nor_gl'), roughnessMap: concrete('rough'),
-      color: 0x8a8f99, alphaMap: new THREE.CanvasTexture(fade), transparent: true, depthWrite: false,
-    })
-  );
-  plaza.rotation.x = -Math.PI / 2;
-  plaza.position.y = y0 + 0.002;
-  plaza.receiveShadow = true;
-  plaza.renderOrder = -1;
-  g.add(plaza);
+  const roofTex = loadTex('roof_diff.jpg', true), roofNor = loadTex('roof_nor_gl.jpg');
+  const MAT = {
+    plaster: new THREE.MeshStandardMaterial({ color: 0xefe2cf, roughness: 0.88 }),
+    stone: new THREE.MeshStandardMaterial({ color: 0xb8a48b, roughness: 0.92 }),
+    red: new THREE.MeshStandardMaterial({ color: 0x8a1e17, roughness: 0.45 }),
+    gold: new THREE.MeshStandardMaterial({ color: 0xdba54c, metalness: 0.9, roughness: 0.3, emissive: 0x2c1805 }),
+    // one greyscale tile texture, tinted glazed orange (main roofs) and green (lower tiers / borders)
+    roofO: new THREE.MeshStandardMaterial({ map: roofTex, normalMap: roofNor, color: 0xe8743a, roughness: 0.55, side: THREE.DoubleSide }),
+    roofG: new THREE.MeshStandardMaterial({ map: roofTex, normalMap: roofNor, color: 0x4f9a5e, roughness: 0.55, side: THREE.DoubleSide }),
+    orn: new THREE.MeshStandardMaterial({ map: ornamentTexture(), roughness: 0.45, metalness: 0.35, side: THREE.DoubleSide }),
+    glow: new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffb35c).multiplyScalar(1.7) }),   // lamp-lit doors, windows
+  };
+  const decor = makeBatch();      // no shadows
+  const boards = makeBatch();     // the boundary balustrade casts + receives shadows (it's inside the shadow frustum)
 
-  // riverside railing around the promenade
+  // ---- courtyard paving: Poly Haven "Large Grey Tiles", warmed to sandstone ----
   {
-    const RX = 21, RZ = 17, railH = 1.05;
-    const railMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, metalness: 0.7, roughness: 0.35 });
-    const postPts = [];
-    const rails = [];
-    const sides = [
-      [new THREE.Vector3(-RX, 0, -RZ), new THREE.Vector3(RX, 0, -RZ)],
-      [new THREE.Vector3(RX, 0, -RZ), new THREE.Vector3(RX, 0, RZ)],
-      [new THREE.Vector3(RX, 0, RZ), new THREE.Vector3(-RX, 0, RZ)],
-      [new THREE.Vector3(-RX, 0, RZ), new THREE.Vector3(-RX, 0, -RZ)],
-    ];
-    for (const [a, b] of sides) {
-      const len = a.distanceTo(b), n = Math.round(len / 1.4);
-      for (let i = 0; i < n; i++) postPts.push(a.clone().lerp(b, i / n));
-      for (const h of [railH, railH * 0.5]) {
-        const r = new THREE.Mesh(new THREE.BoxGeometry(len, h === railH ? 0.07 : 0.03, h === railH ? 0.09 : 0.03), railMat);
-        r.position.copy(a).lerp(b, 0.5); r.position.y = y0 + h;
-        r.rotation.y = -Math.atan2(b.z - a.z, b.x - a.x);
-        rails.push(r);
-      }
-    }
-    const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, railH, 0.06), railMat, postPts.length);
-    const pm = new THREE.Matrix4();
-    postPts.forEach((p, i) => { pm.makeTranslation(p.x, y0 + railH / 2, p.z); posts.setMatrixAt(i, pm); });
-    g.add(posts, ...rails);
+    const W = 84, D = 36;
+    const geo = new THREE.PlaneGeometry(W, D);
+    const uv = geo.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (W / 3), uv.getY(i) * (D / 3));   // 3 m per texture tile
+    const arm = loadTex('paving_arm.jpg');                     // R = AO, G = roughness
+    const paving = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      map: loadTex('paving_diff.jpg', true), normalMap: loadTex('paving_nor_gl.jpg'),
+      aoMap: arm, roughnessMap: arm, color: 0xd6bf9f, roughness: 1,
+    }));
+    paving.rotation.x = -Math.PI / 2;
+    paving.position.y = y0 + 0.002;
+    paving.receiveShadow = true;
+    g.add(paving);
   }
 
-  // LED advertising boards = the hard boundary of the play area
-  const ledTex = ledTexture();
-  const boardH = 0.8, boardT = 0.12;
-  const frameMat = new THREE.MeshStandardMaterial({ color: 0x111216, roughness: 0.6, metalness: 0.3 });
-  const makeBoard = (len, x, z, rotY) => {
-    const b = new THREE.Group();
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(len, boardH, boardT), frameMat);
-    frame.castShadow = true;
-    b.add(frame);
-    const tex = ledTex.clone();
-    tex.needsUpdate = true;
-    tex.repeat.set(len / 8, 1);
-    const face = new THREE.Mesh(
-      new THREE.PlaneGeometry(len - 0.06, boardH - 0.12),
-      new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.55 })
-    );
-    face.position.z = boardT / 2 + 0.002;
-    b.add(face);
-    b.position.set(x, boardH / 2, z);
-    b.rotation.y = rotY;
-    // lean back slightly like courtside LED boards
-    b.rotateX(-0.08);
-    g.add(b);
-    ledBoards.push(tex);
-  };
-  const bx = F.outX + boardT / 2, bz = F.outZ + boardT / 2;
-  makeBoard(F.outX * 2, 0, -bz, 0);            // faces +z (into court)
-  makeBoard(F.outX * 2, 0, bz, Math.PI);       // faces -z
-  makeBoard(F.outZ * 2, -bx, 0, Math.PI / 2);  // faces +x
-  makeBoard(F.outZ * 2, bx, 0, -Math.PI / 2);  // faces -x
-
-  // light towers at the four corners
-  const poleMat = new THREE.MeshStandardMaterial({ color: 0x2a2d35, metalness: 0.6, roughness: 0.4 });
-  const lampMat = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xfff3dc, emissiveIntensity: 9 });
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    const px = sx * (F.outX + 1.6), pz = sz * (F.outZ + 2.6), h = 10;
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, h, 12), poleMat);
-    pole.position.set(px, y0 + h / 2, pz);
-    pole.castShadow = true;
-    g.add(pole);
-    const head = new THREE.Group();
-    head.position.set(px, y0 + h, pz);
-    head.lookAt(0, 0, 0);
-    const housing = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.9, 0.22), poleMat);
-    head.add(housing);
-    for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
-      const lamp = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.3), lampMat);
-      lamp.position.set(-0.48 + i * 0.48, -0.2 + j * 0.4, 0.115);
-      head.add(lamp);
+  // ---- boundary balustrade (replaces the LED boards; same place, same 0.8 m height) ----
+  {
+    const BH = P.C.boardH, BT = 0.2;
+    const panelMat = new THREE.MeshStandardMaterial({ map: panelTexture(), roughness: 0.5, metalness: 0.15 });
+    const bx = F.outX + BT / 2, bz = F.outZ + BT / 2;
+    const runs = [                       // [length, x, z, rotY] — rotY turns the inner face toward the court
+      [F.outX * 2 + BT * 2, 0, -bz, 0], [F.outX * 2 + BT * 2, 0, bz, Math.PI],
+      [F.outZ * 2, -bx, 0, Math.PI / 2], [F.outZ * 2, bx, 0, -Math.PI / 2],
+    ];
+    for (const [len, x, z, ry] of runs) {
+      const nx = Math.sin(ry), nz = Math.cos(ry);
+      boards.put(MAT.plaster, xf(new THREE.BoxGeometry(len, BH - 0.18, BT), x, (BH - 0.18) / 2, z, ry));
+      boards.put(MAT.gold, xf(new THREE.BoxGeometry(len + 0.02, 0.05, BT + 0.04), x, BH - 0.155, z, ry));
+      boards.put(MAT.red, xf(new THREE.BoxGeometry(len + 0.08, 0.13, BT + 0.1), x, BH - 0.065, z, ry));
+      const pg = new THREE.PlaneGeometry(len - 0.1, 0.42);
+      const uv = pg.attributes.uv;
+      for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * (len / 3.36));
+      boards.put(panelMat, xf(pg, x + nx * (BT / 2 + 0.004), 0.31, z + nz * (BT / 2 + 0.004), ry));
     }
-    g.add(head);
-    const spot = new THREE.SpotLight(0xfff0dc, 14, 40, 0.55, 0.7, 1.2);
+  }
+
+  // ---- ordination halls (one at each end, gable front facing the court) ----
+  // Built once in hall space (front at X = 0, extending to +X, y = 0 at the paving), placed twice.
+  const HALL_X = 27.4;
+  const hall = [];
+  {
+    const put = (mat, geo, ...t) => hall.push([mat, xf(geo, ...t)]);
+    // platform, red band, front steps
+    put(MAT.stone, new THREE.BoxGeometry(16.8, 1.0, 16.4), 5.0, 0.5, 0);
+    put(MAT.red, new THREE.BoxGeometry(16.9, 0.14, 16.5), 5.0, 0.92, 0);
+    put(MAT.stone, new THREE.BoxGeometry(1.2, 0.66, 5.2), -4.0, 0.33, 0);
+    put(MAT.stone, new THREE.BoxGeometry(1.2, 0.33, 5.2), -5.2, 0.165, 0);
+    // white-washed cella with a lamp-lit open door and windows
+    put(MAT.plaster, new THREE.BoxGeometry(11, 4.4, 10), 7, 3.2, 0);
+    put(MAT.glow, new THREE.PlaneGeometry(2.2, 3.0), 1.48, 2.6, 0, -Math.PI / 2);
+    for (const z of [-1.2, 1.2]) put(MAT.gold, new THREE.BoxGeometry(0.12, 3.3, 0.18), 1.45, 2.65, z);
+    put(MAT.gold, new THREE.BoxGeometry(0.14, 0.22, 2.6), 1.45, 4.3, 0);
+    for (const x of [3.5, 6, 8.5, 11]) for (const sz of [-1, 1]) {
+      put(MAT.red, new THREE.BoxGeometry(1.1, 1.6, 0.06), x, 3.1, sz * 5.0);
+      put(MAT.glow, new THREE.PlaneGeometry(0.8, 1.3), x, 3.1, sz * 5.04, sz > 0 ? 0 : Math.PI);
+    }
+    // colonnades: a front porch row and a row down each side under the lower roof tier
+    const colTall = new THREE.CylinderGeometry(0.22, 0.27, 4.7, 10);
+    const colShort = new THREE.CylinderGeometry(0.2, 0.25, 3.75, 10);
+    const cap = new THREE.CylinderGeometry(0.36, 0.24, 0.32, 10);
+    for (const z of [-4.6, -2.6, 2.6, 4.6]) { put(MAT.plaster, colTall, -2.7, 3.35, z); put(MAT.gold, cap, -2.7, 5.66, z); }
+    put(MAT.red, new THREE.BoxGeometry(0.4, 0.3, 10.4), -2.7, 5.95, 0);
+    for (const x of [-2.7, 0, 2.7, 5.4, 8.1, 10.8, 13.0]) for (const sz of [-1, 1]) {
+      put(MAT.plaster, colShort, x, 2.875, sz * 7.7);
+      put(MAT.gold, cap, x, 4.8, sz * 7.7);
+    }
+    // roofs: steep main roof, a lower telescoped front tier, and a green skirt tier down each side
+    for (const sz of [-1, 1]) {
+      put(MAT.roofO, slope(-1.6, 13.4, sz * 6.6, 6.2, 0, 11.0));
+      put(MAT.roofO, slope(-3.0, -1.6, sz * 6.0, 5.9, 0, 10.2));
+      put(MAT.roofG, slope(-3.0, 13.4, sz * 8.4, 4.5, sz * 6.2, 5.9));
+      put(MAT.red, new THREE.BoxGeometry(16.4, 0.18, 0.12), 5.2, 4.45, sz * 8.42);
+    }
+    // ornamented gable pediments (front tier, main roof front + back)
+    const ped = (X, hw, yb, ya) => poly([[X, yb, -hw], [X, yb, hw], [X, ya, 0]],
+      [[-hw / 2.4 + 0.5, yb / 2.4], [hw / 2.4 + 0.5, yb / 2.4], [0.5, ya / 2.4]]);
+    put(MAT.orn, ped(-3.02, 5.6, 6.05, 9.95));
+    put(MAT.orn, ped(-1.62, 6.2, 6.4, 10.8));
+    put(MAT.orn, ped(13.42, 6.2, 6.4, 10.8));
+    // gold bargeboards up each front rake, upturned tips at the eaves, ridge caps
+    const rake = (X, ze, ye, yr) => {
+      const L = Math.hypot(ze, yr - ye), a = Math.atan2(yr - ye, ze);
+      for (const s of [-1, 1]) {
+        put(MAT.gold, new THREE.BoxGeometry(0.2, 0.34, L + 0.3), X, (ye + yr) / 2, s * ze / 2, 0, s * a);
+        put(MAT.gold, new THREE.ConeGeometry(0.13, 0.7, 6), X, ye + 0.25, s * (ze + 0.1), 0, s * 0.7);
+      }
+    };
+    rake(-3.05, 6.0, 5.9, 10.2);
+    rake(-1.65, 6.6, 6.2, 11.0);
+    put(MAT.gold, new THREE.BoxGeometry(15.0, 0.16, 0.2), 5.9, 11.05, 0);
+    put(MAT.gold, new THREE.BoxGeometry(1.4, 0.16, 0.2), -2.3, 10.25, 0);
+    // chofa — the slender hooked finials on each gable apex
+    const chofa = (X, y, h) => {
+      const pts = [[0, 0], [-0.12, 0.45], [-0.05, 0.9], [0.25, 1.2], [0.55, 1.15], [0.6, 0.95]]
+        .map(([dx, dy]) => new THREE.Vector3(X + h * dx, y + dy, 0));
+      put(MAT.gold, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 14, 0.1, 6));
+    };
+    chofa(-3.05, 10.2, -1);
+    chofa(-1.65, 11.0, -1);
+    chofa(13.45, 11.0, 1);
+  }
+  for (const s of [-1, 1]) {
+    const M = new THREE.Matrix4().makeRotationY(s > 0 ? 0 : Math.PI).setPosition(s * HALL_X, y0, 0);
+    for (const [mat, geo] of hall) decor.put(mat, geo.clone().applyMatrix4(M));
+  }
+  for (const [, geo] of hall) geo.dispose();
+
+  // ---- chedis (bell-shaped stupas) in the four corners behind the galleries ----
+  {
+    const V = (pts) => pts.map(([r, y]) => new THREE.Vector2(r, y));
+    const body = new THREE.LatheGeometry(V([[0, 0], [3.0, 0], [3.0, 0.7], [2.6, 0.7], [2.6, 1.4], [2.25, 1.4], [2.25, 2.0],
+      [2.35, 2.3], [2.45, 3.0], [2.35, 3.9], [2.0, 4.7], [1.45, 5.35], [0.9, 5.75], [0.85, 6.1], [1.0, 6.1], [1.0, 6.6], [0.6, 6.6]]), 20);
+    const spire = new THREE.LatheGeometry(V([[0.6, 6.6], [0.62, 6.8], [0.5, 6.8], [0.52, 7.0], [0.42, 7.4], [0.44, 7.6],
+      [0.34, 8.0], [0.36, 8.2], [0.26, 8.7], [0.28, 8.9], [0.17, 9.6], [0.12, 10.6], [0.06, 11.6], [0.02, 12.3], [0, 12.5]]), 12);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      decor.put(MAT.plaster, xf(body, sx * 34, y0, sz * 12.8));
+      decor.put(MAT.gold, xf(spire, sx * 34, y0, sz * 12.8));
+    }
+  }
+
+  // ---- cloister galleries down both sides + the courtyard's outer walls ----
+  {
+    const col = new THREE.CylinderGeometry(0.17, 0.2, 3.3, 8);
+    for (const sz of [-1, 1]) {
+      decor.put(MAT.stone, xf(new THREE.BoxGeometry(53, 0.35, 4.0), 0, y0 + 0.175, sz * 15.75));
+      for (let x = -25; x <= 25.01; x += 2.5) decor.put(MAT.plaster, xf(col, x, y0 + 2.0, sz * 14.1));
+      decor.put(MAT.red, xf(new THREE.BoxGeometry(53, 0.28, 0.32), 0, y0 + 3.79, sz * 14.1));
+      decor.put(MAT.roofO, xf(slope(-26.5, 26.5, sz * 13.5, 3.85, sz * 17.75, 5.6), 0, y0, 0));
+      decor.put(MAT.roofG, xf(slope(-26.5, 26.5, sz * 13.45, 3.88, sz * 14.25, 4.21), 0, y0, 0));   // green border course
+      // back wall (it's also the courtyard's side wall), red dado + gold line, little oil lamps
+      decor.put(MAT.plaster, xf(new THREE.BoxGeometry(84.5, 5.7, 0.5), 0, y0 + 2.85, sz * 18.0));
+      decor.put(MAT.red, xf(new THREE.BoxGeometry(84.8, 0.22, 0.75), 0, y0 + 5.8, sz * 18.0));
+      decor.put(MAT.red, xf(new THREE.BoxGeometry(53, 1.1, 0.06), 0, y0 + 1.1, sz * 17.72));
+      decor.put(MAT.gold, xf(new THREE.BoxGeometry(53, 0.07, 0.08), 0, y0 + 1.72, sz * 17.72));
+      for (let x = -22.5; x <= 22.51; x += 5) decor.put(MAT.glow, xf(new THREE.BoxGeometry(0.2, 0.28, 0.1), x, y0 + 2.4, sz * 17.7));
+    }
+    for (const sx of [-1, 1]) {
+      decor.put(MAT.plaster, xf(new THREE.BoxGeometry(0.5, 3.6, 36.5), sx * 42, y0 + 1.8, 0));
+      decor.put(MAT.red, xf(new THREE.BoxGeometry(0.75, 0.2, 36.8), sx * 42, y0 + 3.7, 0));
+    }
+  }
+
+  // ---- stone lanterns: flanking each hall's steps and along the gallery fronts ----
+  const stoneLanterns = [[21.0, 3.6], [21.0, -3.6], [-21.0, 3.6], [-21.0, -3.6],
+    [13, 12.6], [-13, 12.6], [13, -12.6], [-13, -12.6], [24, 12.6], [-24, 12.6], [24, -12.6], [-24, -12.6]];
+  {
+    const base = new THREE.BoxGeometry(0.62, 0.22, 0.62), shaft = new THREE.CylinderGeometry(0.12, 0.16, 0.9, 8);
+    const sill = new THREE.BoxGeometry(0.56, 0.08, 0.56), light = new THREE.BoxGeometry(0.36, 0.34, 0.36);
+    const post = new THREE.BoxGeometry(0.07, 0.36, 0.07), roof = new THREE.ConeGeometry(0.46, 0.42, 4), tip = new THREE.ConeGeometry(0.06, 0.22, 6);
+    for (const [x, z] of stoneLanterns) {
+      decor.put(MAT.stone, xf(base, x, y0 + 0.11, z));
+      decor.put(MAT.stone, xf(shaft, x, y0 + 0.67, z));
+      decor.put(MAT.stone, xf(sill, x, y0 + 1.16, z));
+      decor.put(MAT.glow, xf(light, x, y0 + 1.37, z));
+      for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) decor.put(MAT.stone, xf(post, x + dx * 0.22, y0 + 1.38, z + dz * 0.22));
+      decor.put(MAT.red, xf(roof, x, y0 + 1.77, z, Math.PI / 4));
+      decor.put(MAT.gold, xf(tip, x, y0 + 2.09, z));
+    }
+  }
+
+  // ---- red lantern poles at the court corners: festoons of paper lanterns + the court's floodlights ----
+  const POLE = 6.6;
+  const polePos = [];
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const px = sx * 12.4, pz = sz * 9.4;
+    polePos.push([px, pz]);
+    decor.put(MAT.stone, xf(new THREE.BoxGeometry(0.7, 0.4, 0.7), px, y0 + 0.2, pz));
+    decor.put(MAT.red, xf(new THREE.CylinderGeometry(0.11, 0.14, POLE, 10), px, y0 + POLE / 2, pz));
+    decor.put(MAT.glow, xf(new THREE.BoxGeometry(0.3, 0.42, 0.3), px, y0 + POLE - 0.25, pz));
+    decor.put(MAT.gold, xf(new THREE.ConeGeometry(0.2, 0.7, 8), px, y0 + POLE + 0.3, pz));
+    // warm floodlight hidden in the lamp head (High quality only)
+    const spot = new THREE.SpotLight(0xffd2a0, 12, 40, 0.55, 0.7, 1.2);
     spotLights.push(spot);
-    spot.position.copy(head.position);
+    spot.position.set(px, y0 + POLE - 0.3, pz);
     spot.target.position.set(sx * 3, 0, sz * 1);
     g.add(spot, spot.target);
   }
-
-  // festoon string lights along both sides and across each far end
-  const bulbGeo = new THREE.SphereGeometry(0.055, 10, 8);
-  const bulbMat = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xffc77a, emissiveIntensity: 4 });
-  const wireMat = new THREE.LineBasicMaterial({ color: 0x0a0a0a });
-  const strings = [];
-  const corner = (sx, sz) => new THREE.Vector3(sx * (F.outX + 1.6), y0 + 6.2, sz * (F.outZ + 2.6));
-  strings.push([corner(-1, -1), corner(1, -1)], [corner(-1, 1), corner(1, 1)]); // sides only — end strings blocked the cameras
-  let bulbCount = 0;
-  const pts = [];
-  for (const [a, b] of strings) {
-    const n = Math.round(a.distanceTo(b) / 0.6);
-    const line = [];
-    for (let i = 0; i <= n; i++) {
-      const t = i / n;
-      const p = a.clone().lerp(b, t);
-      p.y -= Math.sin(Math.PI * t) * 1.1;
-      line.push(p);
-      if (i > 0 && i < n) pts.push(p);
+  {
+    // festoons run along both sides only — strings across the ends would block the cameras
+    const wireMat = new THREE.LineBasicMaterial({ color: 0x140c0a });
+    const pts = [];
+    for (const sz of [-1, 1]) {
+      const a = new THREE.Vector3(-12.4, y0 + POLE - 0.1, sz * 9.4), b = new THREE.Vector3(12.4, y0 + POLE - 0.1, sz * 9.4);
+      const n = 30, line = [];
+      for (let i = 0; i <= n; i++) {
+        const t = i / n;
+        const p = a.clone().lerp(b, t);
+        p.y -= Math.sin(Math.PI * t) * 1.1;
+        line.push(p);
+        if (i > 0 && i < n) pts.push(p);
+      }
+      g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(line), wireMat));
     }
-    g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(line), wireMat));
+    const lanternGeo = new THREE.SphereGeometry(0.17, 10, 8);
+    lanternGeo.scale(1, 1.25, 1);
+    const lanterns = new THREE.InstancedMesh(lanternGeo,
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff).multiplyScalar(3.4) }), pts.length);   // >1 so bloom picks them up
+    const warm = [new THREE.Color(0xff5a2e), new THREE.Color(0xffae42), new THREE.Color(0xffd27a)];
+    pts.forEach((p, i) => {
+      _xf.position.set(p.x, p.y - 0.24, p.z); _xf.rotation.set(0, 0, 0); _xf.scale.set(1, 1, 1); _xf.updateMatrix();
+      lanterns.setMatrixAt(i, _xf.matrix);
+      lanterns.setColorAt(i, warm[i % 3]);
+    });
+    g.add(lanterns);
   }
-  const bulbs = new THREE.InstancedMesh(bulbGeo, bulbMat, pts.length);
-  const m4 = new THREE.Matrix4();
-  pts.forEach((p, i) => { m4.makeTranslation(p.x, p.y - 0.08, p.z); bulbs.setMatrixAt(i, m4); bulbCount++; });
-  g.add(bulbs);
 
+  // ---- warm light pools on the paving (fake bounce light: one additive instanced draw) ----
+  {
+    const pools = [
+      ...stoneLanterns.map(([x, z]) => [x, z, 1.7]),
+      ...polePos.map(([x, z]) => [x, z, 2.6]),
+      [HALL_X - 4.6, 0, 3.4], [-(HALL_X - 4.6), 0, 3.4],      // spill from the open hall doors
+    ];
+    const geo = new THREE.CircleGeometry(1, 24);
+    geo.rotateX(-Math.PI / 2);
+    const im = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({
+      map: poolTexture(), color: new THREE.Color(0xffb066).multiplyScalar(0.55), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }), pools.length);
+    pools.forEach(([x, z, r], i) => {
+      _xf.position.set(x, y0 + 0.012, z); _xf.rotation.set(0, 0, 0); _xf.scale.set(r, 1, r); _xf.updateMatrix();
+      im.setMatrixAt(i, _xf.matrix);
+    });
+    g.add(im);
+  }
+
+  // ---- frangipani trees: one template, three instanced draws (bark, leaves, blossoms) ----
+  {
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const bark = [], leaf = [], blossom = [];
+    const limb = (a, b, r0, r1) => {
+      const d = new THREE.Vector3().subVectors(b, a), L = d.length();
+      const c = new THREE.CylinderGeometry(r1, r0, L, 6);
+      c.translate(0, L / 2, 0);
+      c.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), d.normalize()));
+      c.translate(a.x, a.y, a.z);
+      bark.push(c.toNonIndexed());
+    };
+    const fork = V(0.1, 1.5, 0);
+    limb(V(0, 0, 0), fork, 0.2, 0.15);
+    for (const [x, y, z] of [[1.3, 2.6, 0.4], [-1.1, 2.8, 0.7], [0.2, 3.0, -1.2], [-0.5, 2.5, -0.6]]) {
+      const mid = V(x, y, z);
+      limb(fork, mid, 0.13, 0.09);
+      for (const [dx, dy, dz] of [[0.6, 0.9, 0.3], [-0.2, 1.0, -0.5]]) {
+        const tip = V(x + dx * Math.sign(x), y + dy, z + dz);
+        limb(mid, tip, 0.08, 0.05);
+        const f = new THREE.IcosahedronGeometry(0.75, 0);
+        f.scale(1.25, 0.6, 1.25); f.translate(tip.x, tip.y + 0.15, tip.z);
+        leaf.push(f);
+        for (let k = 0; k < 6; k++) {
+          const a = (k / 6) * Math.PI * 2;
+          const b = new THREE.IcosahedronGeometry(0.1, 0);
+          b.translate(tip.x + Math.cos(a) * 0.55, tip.y + 0.42, tip.z + Math.sin(a) * 0.55);
+          blossom.push(b);
+        }
+      }
+    }
+    const trees = [[19.5, 10.6], [-19.5, 10.6], [19.5, -10.6], [-19.5, -10.6], [6, 11.8], [-6, 11.8], [6, -11.8], [-6, -11.8]];
+    const parts = [
+      [mergeGeometries(bark), new THREE.MeshStandardMaterial({ color: 0x5a4a3c, roughness: 0.9 })],
+      [mergeGeometries(leaf), new THREE.MeshStandardMaterial({ color: 0x2e5a2c, roughness: 0.8, flatShading: true })],
+      [mergeGeometries(blossom), new THREE.MeshStandardMaterial({ color: 0xfff1da, emissive: 0x5a4632, roughness: 0.6 })],
+    ];
+    for (const [geo, mat] of parts) {
+      const im = new THREE.InstancedMesh(geo, mat, trees.length);
+      trees.forEach(([x, z], i) => {
+        _xf.position.set(x, y0, z); _xf.rotation.set(0, i * 2.4, 0); _xf.scale.setScalar(0.95 + (i % 3) * 0.12); _xf.updateMatrix();
+        im.setMatrixAt(i, _xf.matrix);
+      });
+      g.add(im);
+    }
+  }
+
+  decor.build(g);
+  boards.build(g, { castShadow: true, receiveShadow: true });
+
+  // nothing out here ever moves: compute matrices once and stop updating them every frame
+  g.updateMatrixWorld(true);
+  g.traverse((o) => { o.matrixAutoUpdate = false; });
   return g;
 }
 scene.add(buildSurroundings());
@@ -795,7 +1150,6 @@ const keys = new Set();
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
   keys.add(e.code);
-  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) dashQueued = true;
   if (!e.repeat) onActionKey(e.code);
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
 });
@@ -807,10 +1161,8 @@ window.addEventListener('blur', () => keys.clear());
    ===================================================================== */
 let me = null, them = null, playing = false;
 const WALK = 4.0, ACCEL = 28, JUMP_V = 7.6, GRAV = 17;   // jump apex ≈ 1.7 m — big midair attacks
-// Dash: a short burst in the input direction (or facing, if standing still)
-const DASH_SPEED = 11, DASH_TIME = 0.16, DASH_COOLDOWN = 0.7;
-let dashQueued = false, dashT = 0, dashCd = 0;
-const dashDir = new THREE.Vector2();
+// (no dash — reaching the ball is about reading it early and moving)
+let jumpQueued = false;        // a grounded L at the net jumps you into the block
 let lastZone = '';
 let stepDust = 0;
 
@@ -822,27 +1174,11 @@ function updateLocal(dt) {
   if (keys.has('KeyA')) right -= 1;
   if (keys.has('KeyD')) right += 1;
   const locked = serveLocked();          // the server stays planted in the circle until the kick
-  if (locked) { fwd = 0; right = 0; dashQueued = false; }
+  if (locked) { fwd = 0; right = 0; jumpQueued = false; }
   const sgn = sideSign(me.side);
   const ix = fwd * sgn, iz = right * sgn;
   const len = Math.hypot(ix, iz);
-  dashCd = Math.max(0, dashCd - dt);
-  if (dashQueued) {
-    dashQueued = false;
-    if (dashCd <= 0 && me.y <= 0) {
-      if (len) dashDir.set(ix / len, iz / len);
-      else dashDir.set(Math.sin(me.facing), Math.cos(me.facing));
-      dashT = DASH_TIME;
-      dashCd = DASH_COOLDOWN;
-      sfx.dash();
-      fx.dust(me.pos.x, me.pos.z, 8);
-    }
-  }
-  if (dashT > 0) {
-    dashT -= dt;
-    me.vel.x = dashDir.x * DASH_SPEED;
-    me.vel.z = dashDir.y * DASH_SPEED;
-  } else {
+  {
     const tx = len ? (ix / len) * WALK : 0, tz = len ? (iz / len) * WALK : 0;
     const a = Math.min(1, (ACCEL * dt) / WALK);
     me.vel.x += (tx - me.vel.x) * a;
@@ -856,7 +1192,8 @@ function updateLocal(dt) {
   // kill velocity into walls so you don't "stick"
   if (dt > 0) { me.vel.x = (me.pos.x - px) / dt * 0.999 || 0; me.vel.z = (me.pos.z - pz) / dt * 0.999 || 0; }
 
-  if (keys.has('Space') && me.y <= 0 && !locked) { me.vy = JUMP_V; sfx.jump(); fx.dust(me.pos.x, me.pos.z, 18); fx.ring(me.pos.x, me.pos.z, { color: 0x9fb4c8, r: 1.0, life: 0.35, bright: 0.8 }); }
+  if ((keys.has('Space') || jumpQueued) && me.y <= 0 && !locked) { me.vy = JUMP_V; sfx.jump(); fx.dust(me.pos.x, me.pos.z, 18); fx.ring(me.pos.x, me.pos.z, { color: 0x9fb4c8, r: 1.0, life: 0.35, bright: 0.8 }); }
+  jumpQueued = false;
   const wasAir = me.y > 0;
   me.vy -= GRAV * dt;
   me.y = Math.max(0, me.y + me.vy * dt);
@@ -903,7 +1240,7 @@ function updateRemote(dt) {
    Rules: max 3 touches per side (one player may take all 3), ball down in
    your court = you lose the point, out / net / under / outside the side
    tapes = the last toucher loses. Serve from the service circle, serve
-   passes every 3 points, game to 21 (win by 2, capped at 25).
+   passes every 3 points, first to 7 wins.
    ===================================================================== */
 const ACTION_DUR = 0.34;
 const REACH = 1.0;                // how far (m) from your body you can play the ball
@@ -912,6 +1249,7 @@ const BALL_VR = P.BALL_R * BALL_VIS;
 const BALL_TIME = 0.78;           // ball physics runs at 78% speed — slower, readable rallies
 const PERFECT = 0.06;             // perfect window (ball-time seconds)
 const other = (s) => (s === 'left' ? 'right' : 'left');
+const WIN_SCORE = 7;              // first to 7 points takes the game
 
 // ---- visuals ----
 function ballTexture() {
@@ -1159,7 +1497,7 @@ const match = {
 let simTime = 0, acc = 0, pending = null, touchCd = 0, pointTimer = 0;
 let frozenEnd = null, frozenTimer = 0, rtt = 80;
 const hist = [];
-let jQ = false, kQ = false, fQ = false;
+let jQ = false, kQ = false, fQ = false, lQ = false;
 let cueArmed = true;
 let lastWhoosh = 0;
 let landingCache = null, landingDirty = true;   // ball flight is deterministic: predict once per change
@@ -1172,6 +1510,7 @@ const serveLocked = () => !!me && (match.phase === 'serve-wait' || match.phase =
 function setBall(b) {
   ball.x = b.x; ball.y = b.y; ball.z = b.z; ball.vx = b.vx; ball.vy = b.vy; ball.vz = b.vz;
   hist.length = 0; pending = null; acc = 0; deadBall.on = false; approach = null; ballFire = false; landingDirty = true;
+  pendingCross = null;
 }
 const packBall = () => [ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz].map((v) => +v.toFixed(4));
 const unpackBall = (a) => ({ x: a[0], y: a[1], z: a[2], vx: a[3], vy: a[4], vz: a[5] });
@@ -1187,6 +1526,7 @@ function onActionKey(code) {
   if (code === 'ArrowRight') aimStep(0, 1);
   if (code === 'KeyJ') jQ = true;      // serve flow, or start charging a set
   if (code === 'KeyK') kQ = true;      // start charging a kick
+  if (code === 'KeyL') lQ = true;      // active block at the net
   if (code === 'KeyF') fQ = true;
   if (code === 'KeyM') setLanding(!showLanding);
 }
@@ -1279,7 +1619,7 @@ function setTarget(p, isSet) {
   return { x, z };
 }
 const bodyPart = (hr) => (hr < 0.95 ? 'foot' : hr < 1.25 ? 'knee' : hr < 1.6 ? 'chest' : 'head');
-const PART_NAME = { clear: 'Clear', smash: 'Smash', ult: 'ULTIMATE SPIN KICK', bicycle: 'Bicycle kick', dheader: 'Diving header', volley: 'Scissor volley', shank: 'Shank', 'serve-power': 'Power serve', foot: 'Inside foot', knee: 'Knee', chest: 'Chest', head: 'Header', kick: 'Kick', spike: 'Spike', serve: 'Serve', toss: 'Toss', body: 'Body', block: 'Block' };
+const PART_NAME = { clear: 'Clear', smash: 'Smash', ult: 'ULTIMATE SPIN KICK', bicycle: 'Bicycle kick', dheader: 'Diving header', volley: 'Scissor volley', shank: 'Shank', 'serve-power': 'Power serve', foot: 'Inside foot', knee: 'Knee', chest: 'Chest', head: 'Header', kick: 'Kick', spike: 'Spike', serve: 'Serve', toss: 'Toss', body: 'Body', block: 'Block', stuff: 'Stuff block', dig: 'Dig' };
 
 function jitter(m) {
   const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * m;
@@ -1316,6 +1656,219 @@ function myBall() {
   if (!me || !ballLive) return false;
   if (match.phase === 'serve-toss') return match.server === me.side;
   return match.phase === 'rally' && (P.sideOfX(ball.x) === me.side || (ball.vx * sideSign(me.side) < 0 && Math.abs(ball.x) < 2));
+}
+
+/* ---------------- attacks: smash warning, perfect dig, active block (L) ----------------
+   When the opponent jumps into a spike / smash, the receiver sees where it will land (red mark).
+   Get inside the mark and a dig meter appears: ONLY green digs it (straight up, like a set — a fresh
+   turn for you); anything else is their point. Or meet it at the net: jump and press L right as the
+   ball crosses over you. Perfect = stuffed straight back down (brutal to return); good = deflected.  */
+const ATTACKS = new Set(['spike', 'smash', 'ult']);
+const isAttack = (part) => ATTACKS.has(part);
+const RX_R = 1.1;                         // be within this of the landing spot to dig
+const BLOCK_X = 0.85;                     // body centre this close to the net to block
+const BLOCK_PERFECT = 0.05 * BALL_TIME;   // ±50 ms (real time) around the ball crossing over you
+const BLOCK_GOOD = 0.1 * BALL_TIME;       // ±100 ms
+const BLOCK_CD = 0.7;                     // recovery between block attempts (s) — no spamming
+let myTele = null;                        // my attack's aim spot while I'm jumping into it (sent to the opponent)
+let blockCd = 0, blockPress = -1e9, pendingCross = null, hitStop = 0;
+const smashWarn = { on: false, inPos: false, announced: false };
+
+// their attack is in the air, heading for my court
+const smashIncoming = () => !!me && ballLive && match.phase === 'rally' && isAttack(match.lastPart) && !!match.last && match.last !== me.side;
+
+// would my jump K right now be a spike / smash? (mirrors doTouch's classification)
+function attackLikely() {
+  if (!me || match.phase !== 'rally' || me.y <= 0.12) return false;
+  const offOwnSet = match.poss === me.side && match.settled;
+  const firstTouch = match.poss !== me.side || match.cnt === 0;
+  if (offOwnSet && Math.abs(me.pos.x) <= 3.2) return true;
+  return firstTouch && match.lastPart === 'clear';
+}
+
+// where their attack will come down, if it's in my court
+function digSpot() {
+  return landingCache && P.sideOfX(landingCache.x) === me.side && P.inCourt(landingCache.x, landingCache.z) ? landingCache : null;
+}
+
+// ball-time until the ball drops through height h (or ends)
+function timeToDrop(h) {
+  const b = P.copyBall(ball);
+  for (let t = 0; t < 2.5;) {
+    t += P.STEP * 2;
+    const end = P.step(b, P.STEP * 2, null);
+    if ((b.vy < 0 && b.y <= h) || end) return t;
+  }
+  return Infinity;
+}
+
+// red mark on my court where their attack is going (green once I'm in position)
+const smashMark = (() => {
+  const g = new THREE.Group();
+  const outer = flatRing(RX_R - 0.12, RX_R, 0xffffff, 0.9);
+  const inner = flatRing(0, 0.16, 0xffffff, 0.9);
+  const halo = flatRing(0, RX_R - 0.12, 0xffffff, 0.12);
+  g.add(halo, outer, inner);
+  g.position.y = 0.02;
+  g.visible = false;
+  scene.add(g);
+  return { g, mats: [outer.material, inner.material, halo.material] };
+})();
+function updateSmashMark() {
+  let spot = null;
+  const live = smashIncoming();
+  if (live) spot = digSpot();
+  else if (them && them.tele && ballLive && match.phase === 'rally') spot = them.tele;   // they're jumping into it
+  smashWarn.on = !!spot && playing;
+  smashMark.g.visible = smashWarn.on;
+  if (!smashWarn.on) { smashWarn.announced = false; return; }
+  smashWarn.inPos = Math.hypot(me.pos.x - spot.x, me.pos.z - spot.z) <= RX_R;
+  smashMark.g.position.set(spot.x, 0.02, spot.z);
+  const c = smashWarn.inPos ? 0x4fdc86 : 0xff3b2f;
+  for (const m of smashMark.mats) m.color.set(c).multiplyScalar(1.8);
+  smashMark.g.scale.setScalar(1 + Math.sin(performance.now() / (live ? 60 : 110)) * 0.05);
+  if (!smashWarn.announced) { smashWarn.announced = true; sfx.cue(); }
+}
+
+// dig meter: only while I'm standing in the mark; same bar, but only green counts
+function updateDigMeter() {
+  const el = $('tm-float');
+  const spot = digSpot();
+  const inPos = spot && Math.hypot(me.pos.x - spot.x, me.pos.z - spot.z) <= RX_R;
+  if (!inPos || pending || touchCd > 0) {
+    if (approach && !approach.dead && approach.dig && !inPos) approach = null;   // stepped out: the meter goes away
+    el.classList.remove('charging'); me.charging = null;
+    return;
+  }
+  const r = timeToDrop(0.9) / BALL_TIME;
+  if (!approach || !approach.dig) {
+    if (r > APPROACH_R) { el.classList.remove('charging'); return; }
+    approach = { p: 1, needle: 0, dead: false, lastSeen: 0, dig: true };
+    sfx.cue();
+  }
+  if (approach.dead) { el.classList.remove('charging'); me.charging = null; return; }
+  approach.lastSeen = performance.now();
+  approach.needle = Math.max(approach.needle, THREE.MathUtils.clamp(needleAt(r, approach.p), 0, 1));
+  if (approach.needle >= 1) { approach.dead = true; el.classList.remove('charging'); return; }   // never pressed: it lands
+  el.classList.add('charging');
+  me.charging = 'K';
+  const inGreen = Math.abs(approach.needle - G_CENTER) <= GREEN_HALF;
+  $('tmf-marker').style.opacity = '1';
+  $('tmf-marker').style.left = `${approach.needle * 100}%`;
+  $('tmf-fill').style.width = `${approach.needle * 100}%`;
+  $('tmf-label').textContent = inGreen ? 'DIG!' : 'GREEN ONLY';
+  $('tmf-label').className = 'tmf-label ' + (inGreen ? 'perfect' : 'charge');
+  $('tmf-part').textContent = '';
+  floatT = 0.3;
+}
+
+// J / K while their attack is coming: green digs it, anything else loses the point
+function tapDig(kind) {
+  if (!approach || !approach.dig || approach.dead) { whiff(kind); return; }   // not in the mark yet / too early
+  const e = approach.needle - G_CENTER;
+  approach.dead = true;
+  me.charging = null;
+  if (Math.abs(e) > GREEN_HALF) {
+    me.action = { part: 'shank', t: 0 };
+    showTiming(e, e < 0 ? 'EARLY' : 'LATE', null, 'missed the dig');
+    sfx.miss();
+    setMeter(0);
+    endRally(me.side, 'DIG');
+    return;
+  }
+  const tau = timeToDrop(0.9);
+  if (tau > 0.012 && Number.isFinite(tau)) pending = { kind: 'DIG', at: simTime + tau, err: Math.abs(e), early: e < 0, d: 0, charge: 1, aim: null, tier: 2 };
+  else doDig();
+}
+
+// perfect dig: the ball pops (nearly) straight up over you like a set — a fresh turn for your side
+function doDig() {
+  const s = sideSign(me.side);
+  const from = { x: ball.x, y: Math.max(ball.y, 0.4), z: ball.z };
+  const tg = {
+    x: from.x + THREE.MathUtils.clamp(-s * 3.8 - from.x, -0.6, 0.6),   // drift a touch toward the middle of your half
+    z: from.z + THREE.MathUtils.clamp(-from.z, -0.5, 0.5),
+  };
+  setBall(P.solveApex(from, tg, 6.7, false));
+  match.lastPart = 'dig';
+  if (match.poss !== me.side) { match.poss = me.side; match.cnt = 0; }
+  match.cnt++;
+  match.last = me.side;
+  match.settled = true;            // plays like a set: you can go straight into your own attack
+  touchCd = 0.25;
+  me.facing = s > 0 ? Math.PI / 2 : -Math.PI / 2;
+  me.action = { part: 'chest', t: 0 };
+  setMeter(myMeter + 20);
+  showTiming(0, 'PERFECT', 'dig', 'dug it!');
+  contactJuice('dig', 'PERFECT', from, true);
+  sfx.touch(match.cnt);
+  sendTouch('dig', 'PERFECT');
+  renderMatchUI();
+}
+
+// L: an active block. Grounded at the net it jumps you into it; the press is judged against the
+// moment their attack crosses over you (it can come just before or just after the crossing).
+function tryBlock() {
+  if (!me || !playing || match.phase !== 'rally' || !ballLive || blockCd > 0) return;
+  if (Math.abs(me.pos.x) > BLOCK_X) { showTiming(null, 'NO BLOCK', null, 'get to the net'); return; }
+  const threat = P.sideOfX(ball.x) !== me.side || (isAttack(match.lastPart) && match.last !== me.side);
+  if (!threat) return;                                  // nothing coming: L doesn't waste a jump
+  if (me.y <= 0) jumpQueued = true;
+  blockCd = BLOCK_CD;
+  blockPress = simTime;
+  me.action = { part: 'block', t: 0 };
+  if (pendingCross) {                                   // it already went over: late side of the window
+    const late = simTime - pendingCross.t;
+    const c = pendingCross;
+    pendingCross = null;
+    if (late <= BLOCK_GOOD && c.geomOk) resolveBlock(c, late);
+    else missBlock('LATE');
+  }
+}
+function blockGeomOk(c) {
+  return me.y > 0.12 && Math.abs(me.pos.x) <= BLOCK_X && Math.abs(me.pos.z - c.z) <= 0.8 && c.y >= me.y + 0.45 && c.y <= me.y + 2.5;
+}
+// called when their attack crosses the net toward me
+function onAttackCross(e) {
+  const c = { x: e.x, y: e.y, z: e.z, t: simTime, geomOk: blockGeomOk(e) };
+  const early = c.t - blockPress;                       // pressed this long before the crossing
+  if (early >= 0 && early <= BLOCK_GOOD && c.geomOk) { resolveBlock(c, -early); return; }
+  if (early >= 0 && early <= 0.5) { missBlock(early > BLOCK_GOOD ? 'EARLY' : 'MISSED'); return; }
+  pendingCross = c.geomOk ? c : null;
+}
+function missBlock(kind) {
+  blockPress = -1e9;
+  recoverT = Math.max(recoverT, 0.4);
+  showTiming(null, kind === 'MISSED' ? 'MISSED BLOCK' : `${kind} BLOCK`, 'block', 'it got past you');
+  sfx.miss();
+}
+function resolveBlock(c, dt) {
+  pendingCross = null; blockPress = -1e9;
+  const perfect = Math.abs(dt) <= BLOCK_PERFECT;
+  const s = sideSign(me.side);                          // their half is on the +s side of the net
+  const from = { x: s * 0.12, y: Math.max(c.y, P.netTop(c.z) + 0.15), z: c.z };
+  const zIn = (z) => THREE.MathUtils.clamp(z, -(F.hw - 0.4), F.hw - 0.4);
+  let shot;
+  if (perfect) {
+    // stuffed: driven at a sharp angle straight down into their court, just behind the net
+    shot = P.solveSpeed(from, { x: s * (0.9 + Math.random() * 1.3), z: zIn(c.z + (Math.random() - 0.5) * 2.4) }, 15);
+  } else {
+    // deflected: pops softly back up on their side — they can still play it
+    shot = P.solveApex(from, { x: s * (1.6 + Math.random() * 1.6), z: zIn(c.z + (Math.random() - 0.5) * 2) }, Math.max(from.y + 1.2, 3.4), false);
+  }
+  setBall(shot);
+  match.lastPart = perfect ? 'stuff' : 'block';
+  match.poss = other(me.side); match.cnt = 0;           // a block isn't a touch; they get a fresh three
+  match.last = me.side; match.settled = false;
+  touchCd = 0.3;
+  if (perfect) hitStop = 0.09;                          // brief impact freeze
+  me.action = { part: 'block', t: 0 };
+  setMeter(myMeter + (perfect ? 20 : 5));
+  const label = perfect ? 'PERFECT' : 'GOOD';
+  showTiming(dt, label, perfect ? 'stuff' : 'block', perfect ? 'stuffed!' : 'deflected');
+  contactJuice(match.lastPart, label, from, true);
+  sendTouch(match.lastPart, label);
+  renderMatchUI();
 }
 
 /* ---------------- auto timing meter: it starts by itself as the ball comes in — just TAP on green ---------------- */
@@ -1358,7 +1911,7 @@ function renderMeter() {
   if (!el) return;
   document.getElementById('meter-fill').style.width = `${myMeter}%`;
   el.classList.toggle('ready', myMeter >= METER_ULT_MIN);
-  el.classList.toggle('full', myMeter >= 100);
+  el.classList.toggle('full', myMeter >= 100);   // full meter: "POP ULT" flashes across the bar (CSS)
   document.getElementById('meter-state').textContent = myMeter >= METER_ULT_MIN ? 'ULTIMATE READY · jump + K' : 'perfects build it';
   if (me) {
     const theirs = them ? them.meter || 0 : 0;
@@ -1384,9 +1937,14 @@ function needleAt(r, p) {
 }
 function updateApproach() {
   const el = $('tm-float');
+  myTele = null;
+  if (smashIncoming()) { updateDigMeter(); return; }   // their attack: the dig meter takes over
+  if (pending && pending.kind === 'K' && pending.aim && attackLikely()) myTele = pending.aim;   // swung, contact a beat away
   const live = ballIncoming() && !pending && touchCd <= 0;
   let c = null;
   if (live) c = findContact(me, prefFor('K'), true, 1.2);
+  // jumping into an attack: the opponent gets to see where it's aimed
+  if (live && c && c.d <= REACH && attackLikely()) myTele = aimTarget(me);
   if (!live || !c || c.d > REACH) {
     if (approach && !approach.dead && performance.now() - approach.lastSeen > 250) approach = null;
     el.classList.remove('charging');
@@ -1421,6 +1979,7 @@ function tapSwing(kind) {
   if (touchCd > 0 || pending) return;
   sfx.swing();
   if (match.phase === 'serve-toss' && kind !== 'K') return;
+  if (smashIncoming()) { tapDig(kind); return; }
   if (!approach || approach.dead || !ballIncoming()) { whiff(kind); return; }
   const c = findContact(me, prefFor(kind), true, 1.2);
   if (c.d > REACH) { whiff(kind); return; }
@@ -1438,23 +1997,27 @@ let ultPower = 0;
 function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = null) {
   pending = null;
   if (!ballLive) return;
+  if (kind === 'DIG') { doDig(); return; }
   const s = sideSign(me.side);
   const hr = ball.y - me.y;
   const air = me.y > 0.12;
   const isServe = match.phase === 'serve-toss';
   const inSpeed = Math.hypot(ball.vx, ball.vy, ball.vz);
+  const firstTouch = match.poss !== me.side || match.cnt === 0;           // first touch on your side
+  const incoming = firstTouch ? match.lastPart : null;                   // the shot that came over
+  const hardIncoming = incoming === 'smash' || incoming === 'spike' || incoming === 'ult' || incoming === 'stuff';
+  const emergency = kind === 'J' && !isServe && match.poss === me.side && match.cnt === 2;   // J as your third touch
 
   // timing tier from the release
   let tier = forcedTier !== null ? forcedTier : err <= GREEN_HALF ? 2 : err <= YELLOW_HALF ? 1 : 0;
   if (tier === 2 && d > 0.8) tier = 1;                                  // stretched for it
   if (kind === 'K' && inSpeed > 14 && !isServe && tier > 0) tier--;     // hard balls are hard to kick — control with J
+  if (incoming === 'stuff' && tier > 0) tier--;                         // a stuffed block comes down brutally: green plays like good
+  if (emergency && tier === 0 && err <= YELLOW_HALF * 1.6) tier = 1;    // a desperate third-touch save is a bit more forgiving
   const label = tier === 2 ? 'PERFECT' : tier === 1 ? 'GOOD' : early ? 'EARLY' : 'LATE';
   const sub = tier === 1 ? (early ? 'early' : 'late') : '';
 
   if (!isServe && match.poss === me.side && match.cnt >= 3) { endRally(me.side, 'FOUR'); return; }
-  const firstTouch = match.poss !== me.side || match.cnt === 0;           // first touch on your side
-  const incoming = firstTouch ? match.lastPart : null;                   // the shot that came over
-  const hardIncoming = incoming === 'smash' || incoming === 'spike' || incoming === 'ult';
 
   const from = { x: ball.x, y: ball.y, z: ball.z };
   const weak = (1 - chargeAmt);                       // short charge = less power
@@ -1463,7 +2026,12 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
     const t = aimTarget(me);
     return Math.random() < 0.5 ? { x: s * (F.hl + 1.0 + Math.random() * 1.5), z: t.z } : { x: s * (2 + Math.random() * 3), z: (Math.random() < 0.5 ? -1 : 1) * (F.hw + 0.8 + Math.random()) };
   };
-  if (kind === 'J') {
+  if (kind === 'J' && emergency) {
+    // third touch with J: a desperate, high, less precise ball that goes OVER — never a fourth touch
+    part = bodyPart(hr);
+    const [ox, oz] = jitter([2.2, 1.4, 0.9][tier]);
+    shot = P.solveApex(from, { x: s * (3.2 + Math.random() * 3.0) + ox, z: (Math.random() - 0.5) * 3 + oz }, tier === 0 ? 4.6 : 7.4, true);
+  } else if (kind === 'J') {
     part = bodyPart(hr);
     const isSet = match.poss === me.side && match.cnt >= 1;
     const tg = setTarget(me, isSet);
@@ -1502,7 +2070,7 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
         shot = P.solveSpeed(from, tg, (tier === 2 ? 21 : 17) + 14 * pw);
         part = 'ult'; ultPower = pw;
       } else if (tier === 2) { const [ox, oz] = jitter(0.3); tg.x += ox; tg.z += oz; shot = P.solveSpeed(from, tg, (17 + 6 * chargeAmt)); }
-      else if (tier === 1) { const [ox, oz] = jitter(1.1); tg.x += ox; tg.z += oz; shot = P.solveSpeed(from, tg, 13 + 2 * chargeAmt); }
+      else if (tier === 1) { const [ox, oz] = jitter(0.6); tg.x += ox; tg.z += oz; shot = P.solveSpeed(from, tg, 13 + 2 * chargeAmt); }   // stays inside the warning mark
       else shot = Math.random() < 0.5 ? P.solveSpeed(from, offOut(), 14) : P.solveApex(from, { x: s * 3, z: tg.z }, 4.6, true);
     } else {
       part = isServe ? 'serve' : hr < 1.3 ? 'kick' : bodyPart(hr);
@@ -1536,13 +2104,13 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
     match.cnt++;
   }
   match.last = me.side;
-  match.settled = kind === 'J' && tier >= 1;
+  match.settled = kind === 'J' && tier >= 1 && !emergency;
   touchCd = 0.25;
   me.facing = kind === 'J' ? (s > 0 ? Math.PI / 2 : -Math.PI / 2) : Math.atan2(shot.vx, shot.vz) || me.facing;
   me.action = { part, t: 0 };
   // meter: the Ultimate spends it all; otherwise perfects build it and way-off touches empty it
   if (part === 'ult') { setMeter(0); ballFire = true; }
-  else setMeter(tier === 2 ? myMeter + 20 : tier === 1 ? myMeter + 5 : 0);
+  else setMeter(tier === 2 ? myMeter + (emergency ? 5 : 20) : tier === 1 ? myMeter + 5 : 0);
   showTiming(early ? -err : err, label, part, sub);
   contactJuice(part, label, from, true, tier === 2 && kind === 'K' ? 1 : 0);
   if (!isServe) sfx.touch(match.cnt);
@@ -1572,6 +2140,8 @@ function contactJuice(part, label, at, mine, power = 0) {
   else if (part === 'head') sfx.head(pan);
   else if (part === 'chest') sfx.chest(pan);
   else if (part === 'body' || part === 'block') sfx.body(pan);
+  else if (part === 'stuff') { sfx.spike(1, pan); sfx.body(pan); }
+  else if (part === 'dig') { sfx.chest(pan); sfx.kick(0.5, pan); }
   else if (part === 'toss') sfx.toss(pan);
   if (part === 'toss') { fx.emit(at.x, at.y, at.z, { n: 8, color: PAL.cool, speed: 0.8, up: 1, life: 0.4, size: 0.06 }); return; }
   const perfect = label === 'PERFECT';
@@ -1599,6 +2169,14 @@ function contactJuice(part, label, at, mine, power = 0) {
     fx.emit(at.x, at.y, at.z, { n: 60, color: [0xffffff, 0xfff0a0], bright: 2.6, speed: 10, up: 0.5, life: 0.4, size: 0.07, g: 0.5 });
     fx.ring(at.x, at.z, { color: 0xff5a1a, r: 3.2, life: 0.6 });
     fx.ring(at.x, at.z, { color: 0xffd34d, r: 2.2, life: 0.45 });
+  } else if (part === 'stuff') {
+    shake(0.5);
+    fx.flash(at.x, at.y, at.z, { color: 0x9fe0ff, size: 3.2, life: 0.25 });
+    fx.emit(at.x, at.y, at.z, { n: 70, color: PAL.cool, bright: 2, speed: 5.5, up: 1.5, life: 0.7, size: 0.11 });
+    fx.ring(at.x, at.z, { color: 0x5cb8f0, r: 2.4, life: 0.45 });
+  } else if (part === 'dig') {
+    shake(0.2);
+    fx.ring(at.x, at.z, { color: 0x4fdc86, r: 1.8, life: 0.45 });
   } else if (part === 'smash') {
     shake(0.28);
     fx.ring(at.x, at.z, { color: 0xffffff, r: 1.3, life: 0.35 });
@@ -1623,6 +2201,7 @@ function sendTouch(part, label = '') {
 // a ball that hits your body without a key press still counts (blocks at the net don't)
 function bodyCheck() {
   if (!me || touchCd > 0 || pending || match.phase !== 'rally') return;
+  if (smashIncoming()) return;                          // their attack: only a green dig or an L block stops it
   if (approach && !approach.dead) return;               // you're lined up to play it — not a body touch
   if (P.sideOfX(ball.x) !== me.side) return;
   if (match.last === me.side && ball.vy > 0) return;   // your own set rising past you isn't a body touch
@@ -1677,6 +2256,8 @@ function handleEvent(e) {
     if (e.type === 'tape') { landingDirty = true; sfx.tape(pan); fx.emit(e.x, e.y, e.z, { n: 8, color: 0xffffff, speed: 1.2, life: 0.4 }); }
     if (me && match.poss === me.side) cueArmed = true;
     renderMatchUI();
+    // their attack just went over the net toward me: was there a block on it?
+    if (me && isAttack(match.lastPart) && match.last && match.last !== me.side && P.sideOfX(ball.x) === me.side) onAttackCross(e);
     return;
   }
   if (e.type === 'net') {
@@ -1746,7 +2327,7 @@ function applyPoint(loser, reason) {
     match.serveCount++;
     if (match.serveCount >= 3) { match.serveCount = 0; match.server = other(match.server); }
     const a = match.score.left, b = match.score.right;
-    if ((Math.max(a, b) >= 11 && Math.abs(a - b) >= 2) || Math.max(a, b) >= 15) match.over = true;   // first to 11, win by 2, cap 15
+    if (Math.max(a, b) >= WIN_SCORE) match.over = true;   // first to 7 wins
   }
   match.phase = 'point';
   pointTimer = 2.0;
@@ -1832,6 +2413,8 @@ function feedBall() {
 function updateBall(dt) {
   touchCd = Math.max(0, touchCd - dt * BALL_TIME);
   recoverT = Math.max(0, recoverT - dt);
+  blockCd = Math.max(0, blockCd - dt);
+  if (pendingCross && simTime - pendingCross.t > BLOCK_GOOD) pendingCross = null;
 
   // inputs
   if (jQ) {
@@ -1842,10 +2425,12 @@ function updateBall(dt) {
     else tapSwing('J');
   }
   if (kQ) { kQ = false; tapSwing('K'); }
+  if (lQ) { lQ = false; tryBlock(); }
   if (fQ) { fQ = false; if (mode === 'solo' && (match.phase === 'idle' || match.phase === 'serve-wait')) feedBall(); }
 
-  // fixed-step physics, slowed by BALL_TIME
-  if (ballLive) {
+  // fixed-step physics, slowed by BALL_TIME (held for a beat after a stuff block)
+  if (hitStop > 0) hitStop -= dt;
+  else if (ballLive) {
     acc += dt * BALL_TIME;
     let n = 0;
     while (acc >= P.STEP && n < 40) { acc -= P.STEP; n++; physStep(true); if (!ballLive) { acc = 0; break; } }
@@ -1897,17 +2482,18 @@ function renderBall(dt) {
     ballShadow.material.opacity = 0.6 / (1 + ball.y * 0.5);
   }
 
-  // landing prediction
+  // landing prediction (always computed — the smash warning needs it — but only drawn if the marker is on)
   landMark.visible = false;
-  if (showLanding && ballLive) {
+  if (ballLive) {
     if (landingDirty || !landingCache) { const r = P.simulate(ball, 4); landingCache = r.end; landingDirty = false; }
-    if (landingCache) { landMark.visible = true; landMark.position.set(landingCache.x, 0.01, landingCache.z); }
+    if (landingCache && showLanding) { landMark.visible = true; landMark.position.set(landingCache.x, 0.01, landingCache.z); }
   }
   landMark.rotation.y += dt * 2;
+  if (me) updateSmashMark();
 
   // timing ring: shows how long until the sweet spot (if the ball will come into reach)
   timingRing.visible = false;
-  if (myBall() && !pending && touchCd <= 0) {
+  if (myBall() && !pending && touchCd <= 0 && !smashIncoming()) {
     const kind = match.phase === 'serve-toss' ? 'K' : 'J';
     const c = findContact(me, prefFor(kind), false);
     if (c.d <= REACH && c.tau <= 0.7) {
@@ -1962,7 +2548,7 @@ function onRemoteMatch(m) {
 }
 
 /* ---------------- contact poses ---------------- */
-const ACTION_DURS = { clear: 0.4, smash: 0.5, ult: 0.85, bicycle: 0.8, dheader: 0.6, volley: 0.5, spike: 0.62, shank: 0.45, 'serve-power': 0.42 };
+const ACTION_DURS = { clear: 0.4, smash: 0.5, ult: 0.85, bicycle: 0.8, dheader: 0.6, volley: 0.5, spike: 0.62, shank: 0.45, 'serve-power': 0.42, block: 0.45, stuff: 0.5 };
 // rotate the body around the hips (not the feet) so flips and dives look right
 function hipPivot(p, rx, rz = 0) {
   const h = 0.95;
@@ -2030,8 +2616,13 @@ function actionPose(p, part, e, u = 0) {
       break;
     case 'toss':
       for (const A of p.arms) { A.sh.rotation.x = -2.1 * e; A.el.rotation.x = -0.2; } break;
-    case 'block':
-      for (const A of p.arms) { A.sh.rotation.x = -2.9 * e; A.sh.rotation.z = A.sx * 0.25; } break;
+    case 'block':            // no hands: torso twists into it and the kicking leg sweeps up to wall off the net
+    case 'stuff':
+      hipPivot(p, -0.35 * e, -0.25 * e);
+      L1.hip.rotation.x = -1.7 * e; L1.hip.rotation.z = 0.5 * e; L1.knee.rotation.x = 0.15;
+      L0.hip.rotation.x = 0.3 * e; L0.knee.rotation.x = 0.6 * e;
+      for (const A of p.arms) { A.sh.rotation.z = A.sx * 0.9 * e; A.sh.rotation.x = 0.3 * e; }
+      break;
     case 'body':
       hipPivot(p, -0.25 * e); break;
   }
@@ -2040,7 +2631,7 @@ function actionPose(p, part, e, u = 0) {
 /* ---------------- HUD ---------------- */
 const REASON = {
   IN: 'Ball down', OUT: 'Out', WIDE: 'Outside the tapes', UNDER: 'Under the net',
-  FOUR: 'Four touches', FOOT: 'Foot fault', DROP: 'Serve dropped',
+  FOUR: 'Four touches', FOOT: 'Foot fault', DROP: 'Serve dropped', DIG: 'Missed the dig',
 };
 function sideName(side) {
   if (!me) return '';
@@ -2106,7 +2697,9 @@ let lastHint = '';
 function updateHint() {
   if (!me) return;
   let h = '';
-  if (match.phase === 'idle') h = 'J  serve      F  ball feed';
+  const atNet = Math.abs(me.pos.x) <= BLOCK_X + 0.3;
+  if (smashWarn.on) h = smashWarn.inPos ? 'In position  ·  J on GREEN to dig' : atNet && !smashIncoming() ? 'L  block as it crosses  ·  or get to the red mark' : 'Smash incoming  ·  get to the red mark';
+  else if (match.phase === 'idle') h = 'J  serve      F  ball feed';
   else if (match.phase === 'wait') h = 'Waiting for the host…';
   else if (match.phase === 'serve-wait') h = match.server === me.side ? `J  toss      arrows  aim (${AIM_NAMES[aimCell.row][aimCell.col]})` : `${sideName(match.server)} to serve`;
   else if (match.phase === 'serve-toss' && match.server === me.side) h = 'Tap K on green';
@@ -2198,7 +2791,7 @@ function updateCamera() {
 /* =====================================================================
    Networking — PeerJS (WebRTC), no game server
    ===================================================================== */
-const PROTOCOL = 4;
+const PROTOCOL = 5;   // 5: attack aim in position packets, dig + stuff-block touches
 const PREFIX = 'takraw-iso-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 let peer = null, conn = null, sendTimer = null, pingTimer = null;
@@ -2274,6 +2867,8 @@ function onRemoteState(msg) {
   if (Number.isFinite(msg.q)) { if (msg.q <= lastPosSeq) return; lastPosSeq = msg.q; }   // drop out-of-order packets
   const n = (v) => (Number.isFinite(v) ? v : 0);
   them.target = { x: n(msg.x), z: n(msg.z), y: n(msg.y), r: n(msg.r), s: n(msg.s) };
+  // their attack's aim spot while they jump into a spike / smash (drawn as the red warning mark on my court)
+  them.tele = Number.isFinite(msg.tx) && Number.isFinite(msg.tz) ? { x: msg.tx, z: msg.tz } : null;
   if (Number.isFinite(msg.mt) && msg.mt !== them.meter) { them.meter = msg.mt; renderMeter(); }
 }
 function wirePos(c) {
@@ -2297,7 +2892,8 @@ function wireConnection(c) {
       if (!me || !conn || !conn.open) return;
       const ch = posConn && posConn.open ? posConn : conn;
       ch.send({ t: 's', q: posSeq++, mt: Math.round(myMeter), x: +me.pos.x.toFixed(3), z: +me.pos.z.toFixed(3), y: +me.y.toFixed(3),
-        r: +me.facing.toFixed(3), s: +Math.hypot(me.vel.x, me.vel.z).toFixed(2) });
+        r: +me.facing.toFixed(3), s: +Math.hypot(me.vel.x, me.vel.z).toFixed(2),
+        tx: myTele ? +myTele.x.toFixed(2) : null, tz: myTele ? +myTele.z.toFixed(2) : null });
     }, 1000 / 30);
     pingTimer = setInterval(() => { if (conn && conn.open) conn.send({ t: 'ping', ts: performance.now() }); }, 1500);
   });
@@ -2451,7 +3047,6 @@ function frame() {
   autoQuality(dt);
   if (playing) { updateLocal(dt); updateRemote(dt); updateBall(dt); }
   if (window.__takrawBot) window.__takrawBot(dt);   // test hook (unused in normal play)
-  for (const t of ledBoards) t.offset.x = (t.offset.x + dt * 0.04) % 1;
   updateCamera(dt);
   const t1 = performance.now();
   composer.render();

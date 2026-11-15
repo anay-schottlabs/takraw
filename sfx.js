@@ -161,7 +161,6 @@ export const sfx = {
   board(pan = 0) { tone({ f: 90, f2: 60, dur: 0.2, type: 'square', gain: 0.12, pan }); noise({ dur: 0.12, type: 'lowpass', f: 600, gain: 0.35, pan }); },
 
   // ---- player ----
-  dash() { noise({ dur: 0.16, f: 400, f2: 2200, q: 0.8, gain: 0.18, attack: 0.01 }); },
   jump() { tone({ f: 1500, f2: 2300, dur: 0.05, gain: 0.05 }); tone({ f: 120, f2: 70, dur: 0.07, gain: 0.18 }); },
   land() { tone({ f: 100, f2: 60, dur: 0.07, gain: 0.15 }); },
 
