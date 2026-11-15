@@ -287,3 +287,24 @@ button { font-family: inherit; }
 /* scoreboard: you (blue) on the left, opponent (red) on the right */
 .sb-side.left .dot { background: #3d8bff !important; }
 .sb-side.right .dot { background: #ff3b30 !important; }
+
+/* team rooms (2v1 / 2v2) */
+#room { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 10px; }
+.room-fmt { display: flex; gap: 6px; justify-content: center; }
+.room-fmt button { font-family: var(--display); font-weight: 800; font-size: 16px; letter-spacing: 1px; padding: 6px 16px; background: transparent; color: var(--muted); border: 1px solid var(--line); cursor: pointer; }
+.room-fmt button.on { background: var(--blue); color: #08131c; border-color: var(--blue); }
+.room-fmt.readonly button { cursor: default; }
+.room-fmt.readonly button:not(.on) { opacity: .45; }
+.room-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.room-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.room-head { font-family: var(--display); font-weight: 800; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
+.room-slot { display: flex; align-items: center; gap: 6px; background: #0f0f12; border: 1px solid var(--line); padding: 6px 6px 6px 10px; min-height: 38px; }
+.room-slot.me { border-color: #3d8bff; }
+.room-slot.open .rs-name { color: var(--muted); font-style: italic; }
+.room-slot.cpu .rs-name { color: var(--gold); }
+.rs-name { flex: 1; min-width: 0; font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-btn { font-size: 12px; font-weight: 700; padding: 4px 8px; background: transparent; color: var(--blue); border: 1px solid var(--line); cursor: pointer; white-space: nowrap; }
+.rs-btn.add { color: var(--gold); }
+.rs-btn.rm { color: var(--red); }
+@media (max-width: 480px) { .room-cols { grid-template-columns: 1fr; } }
+.lr-code.team { letter-spacing: 1px; font-size: 14px; }

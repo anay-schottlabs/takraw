@@ -38,6 +38,7 @@ const TEAMS = {
   // colours are relative to the viewer: you are always blue, your opponent always red
   me:  { name: 'me',  jersey: 0x3d8bff, trim: 0xf1f6ff, shorts: 0x15161b, css: '#3d8bff' },
   opp: { name: 'opp', jersey: 0xff3b30, trim: 0xfff1ee, shorts: 0x15161b, css: '#ff3b30' },
+  mate: { name: 'mate', jersey: 0x7db4ff, trim: 0xf1f6ff, shorts: 0x15161b, css: '#7db4ff' },   // your teammate (2v1 / 2v2)
 };
 const sideSign = (side) => (side === 'left' ? 1 : -1);
 
@@ -1166,6 +1167,22 @@ window.addEventListener('blur', () => keys.clear());
    Simulation
    ===================================================================== */
 let me = null, them = null, playing = false;
+// ---- teams (2v1 / 2v2). In 1v1 none of this is touched: fmt stays '1v1' and `others` stays empty ----
+let fmt = '1v1';                  // room format chosen by the host
+let roster = [];                  // [{ side, pos: 'front'|'back'|'solo', kind: 'open'|'human'|'cpu', id, name }]
+let myId = 'h';
+const others = new Map();         // id → player (everyone but me) in a team game; `them` points at the opponent in focus
+const teamMode = () => fmt !== '1v1';
+const allPlayers = () => [me, ...others.values()].filter(Boolean);
+const onSide = (side) => allPlayers().filter((p) => p.side === side).sort((a, b) => (a.id < b.id ? -1 : 1));
+const playerById = (id) => (me && id === myId ? me : others.get(id) || null);
+const iServe = () => !!me && match.server === me.side && (!teamMode() || match.serverId === myId);
+function teamSpawn(side, pos) {
+  const s = sideSign(side);
+  if (pos === 'front') return new THREE.Vector3(-s * 2.2, 0, -s * 1.2);
+  if (pos === 'back') return new THREE.Vector3(-s * (F.hl - F.serveFromBack + 0.6), 0, s * 1.2);
+  return spawnPoint(side);
+}
 const WALK = 4.0, ACCEL = 28, JUMP_V = 7.6, GRAV = 17;   // jump apex ≈ 1.7 m — big midair attacks
 // (no dash — reaching the ball is about reading it early and moving)
 let jumpQueued = false;        // a grounded L at the net jumps you into the block
@@ -1226,8 +1243,28 @@ function updateLocal(dt) {
 }
 
 function updateRemote(dt) {
+  if (teamMode()) {
+    for (const p of others.values()) if (p.kind === 'remote' && p.target) interpRemote(p, dt);
+    them = focusOpponent();
+    return;
+  }
   if (mode === 'cpu') return;                       // the CPU moves itself (updateCPU)
   if (!them || !them.target) return;
+  interpRemote(them, dt);
+}
+// team games: the opponent "in focus" (whose aim / attack warning you see) is their server, else whoever is nearest the ball
+function focusOpponent() {
+  const opp = [...others.values()].filter((p) => p.side !== me.side);
+  if (!opp.length) return null;
+  if ((match.phase === 'serve-wait' || match.phase === 'serve-toss') && match.server !== me.side) {
+    const sv = others.get(match.serverId);
+    if (sv) return sv;
+  }
+  let best = opp[0], bd = Infinity;
+  for (const p of opp) { const d = Math.hypot(ball.x - p.pos.x, ball.z - p.pos.z); if (d < bd) { bd = d; best = p; } }
+  return best;
+}
+function interpRemote(them, dt) {
   const t = them.target;
   const k = 1 - Math.exp(-dt * 14);
   const px = them.pos.x, pz = them.pos.z;
@@ -1684,9 +1721,10 @@ let lastWhoosh = 0;
 let landingCache = null, landingDirty = true;   // ball flight is deterministic: predict once per change
 
 const isAuthority = () => mode !== 'guest';
-const decidesHalf = (half) => mode === 'solo' || mode === 'cpu' || (me && me.side === half);
+const decidesHalf = (half) => mode === 'solo' || mode === 'cpu' || (me && me.side === half) ||
+  (teamMode() && mode === 'host' && !onSide(half).some((p) => p === me || p.kind === 'remote'));   // a CPU-only half: the host calls it
 const playerBySide = (side) => (me && me.side === side ? me : them && them.side === side ? them : null);
-const serveLocked = () => !!me && (match.phase === 'serve-wait' || match.phase === 'serve-toss') && match.server === me.side;
+const serveLocked = () => !!me && (match.phase === 'serve-wait' || match.phase === 'serve-toss') && iServe();
 
 function setBall(b) {
   ball.x = b.x; ball.y = b.y; ball.z = b.z; ball.vx = b.vx; ball.vy = b.vy; ball.vz = b.vz;
@@ -1842,7 +1880,7 @@ const prefFor = (kind) => (me && me.y > 0.12 ? 1.55 : match.phase === 'serve-tos
 
 function myBall() {
   if (!me || !ballLive) return false;
-  if (match.phase === 'serve-toss') return match.server === me.side;
+  if (match.phase === 'serve-toss') return iServe();
   return match.phase === 'rally' && (P.sideOfX(ball.x) === me.side || (ball.vx * sideSign(me.side) < 0 && Math.abs(ball.x) < 2));
 }
 
@@ -2087,7 +2125,7 @@ function setMeterZones(gh = GREEN_HALF, yh = YELLOW_HALF) {
 }
 function canSwing() {
   if (!me || !playing) return false;
-  return match.phase === 'rally' || (match.phase === 'serve-toss' && match.server === me.side);
+  return match.phase === 'rally' || (match.phase === 'serve-toss' && iServe());
 }
 // is the ball actually coming at you right now?
 function ballIncoming() {
@@ -2179,7 +2217,7 @@ function tapSwing(kind) {
   if (!me || !playing) return;
   if (recoverT > 0) { sfx.miss(); return; }
   if (touchCd > 0 || pending) return;
-  if (match.phase === 'serve-toss' && match.server === me.side) kind = 'K';   // serve is J, J (K works too)
+  if (match.phase === 'serve-toss' && iServe()) kind = 'K';   // serve is J, J (K works too)
   if (!ballIncoming()) return;                                   // ball not in play / not coming at you: nothing happens
   sfx.swing();
   if (smashIncoming()) {                                         // only J digs
@@ -2463,9 +2501,14 @@ function contactJuice(part, label, at, mine, power = 0) {
 }
 
 function sendTouch(part, label = '') {
+  if (teamMode()) { sendTouchAs(me, part, label); return; }
   if (!conn || !conn.open) return;
   conn.send({ t: 'touch', r: match.rally, b: packBall(), part, label, side: me.side,
     phase: match.phase, poss: match.poss, cnt: match.cnt, last: match.last, settled: match.settled, mt: Math.round(myMeter) });
+}
+function sendTouchAs(p, part, label = '') {
+  netSend({ t: 'touch', id: p === me ? myId : p.id, r: match.rally, b: packBall(), part, label, side: p.side,
+    phase: match.phase, poss: match.poss, cnt: match.cnt, last: match.last, settled: match.settled, mt: p === me ? Math.round(myMeter) : 0 });
 }
 
 // a ball that hits your body without a key press still counts (blocks at the net don't)
@@ -2596,7 +2639,7 @@ function applyPoint(loser, reason) {
   match.winner = winner; match.reason = reason;
   if (mode !== 'solo') {
     match.serveCount++;
-    if (match.serveCount >= 3) { match.serveCount = 0; match.server = other(match.server); }
+    if (match.serveCount >= 3) { match.serveCount = 0; match.server = other(match.server); if (teamMode()) pickServer(match.server); }
     const a = match.score.left, b = match.score.right;
     if (Math.max(a, b) >= WIN_SCORE) match.over = true;   // first to 7 wins
   }
@@ -2623,13 +2666,24 @@ function resetMatch() {
     score: { left: 0, right: 0 }, server: Math.random() < 0.5 ? 'left' : 'right', serveCount: 0,
     poss: null, cnt: 0, last: null, settled: false, winner: null, reason: '', over: false,
   });
+  if (teamMode()) { match.srvIdx = { left: -1, right: -1 }; pickServer(match.server); }
   ballLive = false; pending = null; frozenEnd = null; deadBall.on = false;
   broadcastMatch();
   onMatchChanged(match.phase);
 }
 
 function broadcastMatch() {
-  if (mode === 'host' && conn && conn.open) conn.send({ t: 'match', m: JSON.parse(JSON.stringify(match)) });
+  if (mode !== 'host') return;
+  if (teamMode()) netSend({ t: 'match', m: JSON.parse(JSON.stringify(match)) });
+  else if (conn && conn.open) conn.send({ t: 'match', m: JSON.parse(JSON.stringify(match)) });
+}
+// team games: the serve passes between teammates each time their side wins it back
+function pickServer(side) {
+  const L = onSide(side);
+  if (!L.length) return;
+  match.srvIdx = match.srvIdx || { left: -1, right: -1 };
+  match.srvIdx[side] = (match.srvIdx[side] + 1) % L.length;
+  match.serverId = L[match.srvIdx[side]].id;
 }
 
 // ball position for the serve: a little forward and out to the kicking (screen-right) side
@@ -2656,6 +2710,7 @@ function tossServe() {
   setBall({ x: me.pos.x + o.x, y: 1.0, z: me.pos.z + o.z, vx: o.fx * 0.25, vy: 5.6, vz: o.fz * 0.25 });
   ballLive = true;
   match.phase = 'serve-toss'; match.server = me.side;
+  if (teamMode()) match.serverId = myId;
   match.poss = null; match.cnt = 0; match.last = null;
   me.action = { part: 'toss', t: 0 };
   cueArmed = true;
@@ -2692,7 +2747,7 @@ function updateBall(dt) {
     jQ = false;
     if (mode === 'solo' && match.phase === 'idle') {             // practice: J walks you to the circle, J again tosses
       match.phase = 'serve-wait'; match.server = me.side; snapToServe(); sfx.yourServe(); renderMatchUI();
-    } else if (match.phase === 'serve-wait' && match.server === me.side) tossServe();
+    } else if (match.phase === 'serve-wait' && iServe()) tossServe();
     else tapSwing('J');
   }
   if (kQ) { kQ = false; tapSwing('K'); }
@@ -2735,7 +2790,7 @@ function updateBall(dt) {
 function renderBall(dt) {
   let visible = false;
   if (match.phase === 'serve-wait') {
-    const h = playerBySide(match.server);
+    const h = teamMode() ? playerById(match.serverId) : playerBySide(match.server);
     if (h) {
       const bob = Math.sin(performance.now() / 260) * 0.03;
       const o = heldOffset(h);
@@ -2800,10 +2855,11 @@ function onRemoteTouch(msg) {
   setBall(unpackBall(msg.b.map((v) => (Number.isFinite(v) ? v : 0))));
   ballLive = true; frozenEnd = null;
   if (msg.phase === 'serve-toss' || msg.phase === 'rally') match.phase = msg.phase;
-  if (msg.part === 'toss') match.server = msg.side;
+  if (msg.part === 'toss') { match.server = msg.side; if (teamMode() && msg.id) match.serverId = msg.id; }
   match.poss = msg.poss; match.cnt = msg.cnt; match.last = msg.last; match.settled = !!msg.settled;
   match.lastPart = msg.part;
-  if (them) { them.action = { part: msg.part, t: 0 }; if (Number.isFinite(msg.mt)) them.meter = msg.mt; }
+  const who = (teamMode() && playerById(msg.id)) || them;
+  if (who && who !== me) { who.action = { part: msg.part, t: 0 }; if (Number.isFinite(msg.mt)) who.meter = msg.mt; }
   if (msg.part === 'ult') ballFire = true;
   renderMeter();
   contactJuice(msg.part, '', ball, false);
@@ -2911,6 +2967,7 @@ const REASON = {
 };
 function sideName(side) {
   if (!me) return '';
+  if (teamMode()) return side === me.side ? 'Blue' : 'Red';
   if (side === me.side) return myName;
   if (mode === 'solo') return 'Ball machine';
   return (them && them.displayName) || 'Opponent';
@@ -2954,7 +3011,7 @@ function onMatchChanged(phase) {
       if (me) fx.emit(me.pos.x, 1.2, me.pos.z, { n: 60, color: PAL.confetti, bright: 1.6, speed: 2.5, up: 5, life: 1.5, size: 0.1, g: 6 });
     }
   }
-  if (phase === 'serve-wait' && me && match.server === me.side && lastServeAnnounce !== match.rally) {
+  if (phase === 'serve-wait' && me && iServe() && lastServeAnnounce !== match.rally) {
     lastServeAnnounce = match.rally;
     snapToServe();
     sfx.yourServe();
@@ -2978,8 +3035,8 @@ function updateHint() {
   if (smashWarn.on) h = smashWarn.inPos ? 'In position  ·  J on GREEN to dig' : atNet && !smashIncoming() ? 'L  block as it crosses  ·  or get to the red mark' : 'Smash incoming  ·  get to the red mark';
   else if (match.phase === 'idle') h = 'J  serve      F  ball feed';
   else if (match.phase === 'wait') h = 'Waiting for the host…';
-  else if (match.phase === 'serve-wait') h = match.server === me.side ? `J  toss, then J on green      arrows  aim (${AIM_NAMES[aimCell.row][aimCell.col]})` : `${sideName(match.server)} to serve`;
-  else if (match.phase === 'serve-toss' && match.server === me.side) h = 'Tap J on green';
+  else if (match.phase === 'serve-wait') h = iServe() ? `J  toss, then J on green      arrows  aim (${AIM_NAMES[aimCell.row][aimCell.col]})` : (teamMode() && match.server === me.side ? `${(playerById(match.serverId) || {}).displayName || 'Teammate'} to serve` : `${sideName(match.server)} to serve`);
+  else if (match.phase === 'serve-toss' && iServe()) h = 'Tap J on green';
   else if (match.phase === 'rally' && match.poss === me.side && !(approach && !approach.dead) && P.sideOfX(ball.x) === me.side) h = 'Tap J set  ·  K kick on green   ·   arrows  aim';
   if (h !== lastHint) { lastHint = h; $('hint').textContent = h; $('hint').classList.toggle('hidden', !h); }
 }
@@ -3033,7 +3090,7 @@ const CPU_LEVELS = {
 };
 let cpuLevel = 'normal';
 try { cpuLevel = localStorage.getItem('takraw-cpu') || 'normal'; } catch {}
-const cpu = { serial: -1, reactT: 0, target: null, plan: null, swung: false, serveT: 0, served: false, willPlay: true, digOk: false, cell: null };
+const cpu = { serial: -1, reactT: 0, target: null, plan: null, swung: false, serveT: 0, served: false, willPlay: true, digOk: false, cell: null, pickAimSoon: true };
 let ballSerial = 0;                      // bumps every time the ball's flight changes (any touch)
 
 const cpuOn = () => mode === 'cpu' && !!them;
@@ -3042,41 +3099,41 @@ function cpuRollTier() {
   return r < L.perfect ? 2 : r < L.perfect + L.good ? 1 : 0;
 }
 // pick one of the 9 spots on my (the human's) side, preferring ones far from where I'm standing
-function cpuPickAim() {
-  const p = them, s = sideSign(p.side);
+function cpuPickAim(p, ai) {
+  const s = sideSign(p.side);
+  const opp = teamMode() ? allPlayers().filter((q) => q.side !== p.side) : [me].filter(Boolean);
   let best = null, bestScore = -1;
   for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
     const x = s * AIM_ROWS[r], z = s * AIM_COLS[c];
-    const d = me ? Math.hypot(x - me.pos.x, z - me.pos.z) : 3;
+    const d = opp.length ? Math.min(...opp.map((q) => Math.hypot(x - q.pos.x, z - q.pos.z))) : 3;
     const score = d + Math.random() * 2.5;
     if (score > bestScore) { bestScore = score; best = { x, z }; }
   }
-  cpu.cell = best;
-  them.aim = { x: best.x, z: best.z };            // shows as their red aim spot on your court
+  ai.cell = best;
+  p.aim = { x: best.x, z: best.z };            // shows as their red aim spot on your court
   return best;
 }
 // where (on my side) the ball first drops through height h, if it does
-function cpuIntercept(h) {
-  const b = P.copyBall(ball), s = sideSign(them.side);
+function cpuIntercept(p, h) {
+  const b = P.copyBall(ball), s = sideSign(p.side);
   for (let t = 0; t < 4;) {
     t += P.STEP * 4;
     const end = P.step(b, P.STEP * 4, null);
-    if (b.vy < 0 && b.y <= h && P.sideOfX(b.x) === them.side) return { x: b.x, z: b.z };
-    if (end) return P.sideOfX(b.x) === them.side ? { x: b.x, z: b.z } : null;
+    if (b.vy < 0 && b.y <= h && P.sideOfX(b.x) === p.side) return { x: b.x, z: b.z };
+    if (end) return P.sideOfX(b.x) === p.side ? { x: b.x, z: b.z } : null;
   }
   void s;
   return null;
 }
 
 function cpuStartMatch() {
-  Object.assign(cpu, { serial: -1, reactT: 0, target: null, plan: null, swung: false, serveT: 0, served: false });
-  pickAimSoon = true;
+  Object.assign(cpu, { serial: -1, reactT: 0, target: null, plan: null, swung: false, serveT: 0, served: false, pickAimSoon: true });
 }
-let pickAimSoon = true;
+const newAI = () => ({ serial: -1, reactT: 0, target: null, plan: null, swung: false, serveT: 0, served: false, willPlay: true, digOk: false, cell: null, pickAimSoon: true });
 
 // ---- the CPU makes a touch (mirrors the human's doTouch rules, with a rolled timing tier) ----
-function cpuShot(kind, tier) {
-  const p = them, s = sideSign(p.side);
+function cpuShot(p, ai, kind, tier) {
+  const s = sideSign(p.side);
   if (!ballLive) return;
   const isServe = match.phase === 'serve-toss';
   if (!isServe && match.poss === p.side && match.cnt >= 3) return;           // never takes a 4th touch
@@ -3099,7 +3156,7 @@ function cpuShot(kind, tier) {
     const apex = tier === 0 ? 2.8 + Math.random() * 3 : (isSet ? 6.7 : 5.8) - (tier === 1 ? 0.5 : 0);
     shot = P.solveApex(from, tg, apex, false);
   } else {
-    const aim = cpu.cell || cpuPickAim();
+    const aim = ai.cell || cpuPickAim(p, ai);
     const tg = { x: aim.x, z: aim.z };
     const spike = air && !isServe && settled && ball.y >= 1.7 && Math.abs(p.pos.x) <= 3.2;
     if (spike) {
@@ -3137,84 +3194,108 @@ function cpuShot(kind, tier) {
   match.settled = (kind === 'J' && tier >= 1) || kind === 'DIG';
   p.facing = kind === 'K' ? Math.atan2(shot.vx, shot.vz) || p.facing : (s > 0 ? Math.PI / 2 : -Math.PI / 2);
   p.action = { part, t: 0 };
-  if (kind === 'K') { cpu.cell = null; pickAimSoon = true; }
+  if (kind === 'K') { ai.cell = null; ai.pickAimSoon = true; }
   contactJuice(part, tier === 2 ? 'PERFECT' : tier === 1 ? 'GOOD' : 'LATE', from, false);
+  if (teamMode()) sendTouchAs(p, part, tier === 2 ? 'PERFECT' : tier === 1 ? 'GOOD' : 'LATE');
   renderMatchUI();
 }
 
-function cpuToss() {
-  const p = them;
+function cpuToss(p) {
   const o = heldOffset(p);
   setBall({ x: p.pos.x + o.x, y: 1.0, z: p.pos.z + o.z, vx: o.fx * 0.25, vy: 5.6, vz: o.fz * 0.25 });
   ballLive = true;
   match.phase = 'serve-toss'; match.server = p.side;
+  if (teamMode()) match.serverId = p.id;
   match.poss = null; match.cnt = 0; match.last = null;
   p.action = { part: 'toss', t: 0 };
   contactJuice('toss', '', ball, false);
+  if (teamMode()) sendTouchAs(p, 'toss');
   renderMatchUI();
 }
 
 function updateCPU(dt) {
+  if (teamMode()) {                                // team games: the host runs every CPU
+    if (mode === 'host') for (const p of others.values()) if (p.kind === 'cpu') cpuThink(p, p.ai, dt);
+    return;
+  }
   if (!cpuOn()) return;
-  const p = them, s = sideSign(p.side), L = CPU_LEVELS[cpuLevel];
-  if (pickAimSoon && match.phase !== 'serve-toss') { pickAimSoon = false; cpuPickAim(); }
+  cpuThink(them, cpu, dt);
+}
+// team games: of the players on a side, the one nearest where the ball comes down goes for it (humans get first call)
+function isChaser(p) {
+  const mates = onSide(p.side);
+  if (mates.length < 2) return true;
+  const pt = cpuIntercept(p, 0.95) || (landingCache && { x: landingCache.x, z: landingCache.z }) || { x: ball.x, z: ball.z };
+  let best = null, bd = Infinity;
+  for (const q of mates) {
+    const d = Math.hypot(pt.x - q.pos.x, pt.z - q.pos.z) - (q.kind === 'cpu' ? 0 : 0.7);
+    if (d < bd) { bd = d; best = q; }
+  }
+  return best === p;
+}
+function cpuThink(p, ai, dt) {
+  const s = sideSign(p.side), L = CPU_LEVELS[cpuLevel];
+  if (ai.pickAimSoon && match.phase !== 'serve-toss') { ai.pickAimSoon = false; cpuPickAim(p, ai); }
   let tx = -s * 4.2, tz = 0, run = true;          // home spot: middle of my half
+  if (teamMode() && p.slot === 'front') { tx = -s * 2.2; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5); }
+  else if (teamMode() && p.slot === 'back') { tx = -s * 5.6; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5); }
+  const myServe = match.server === p.side && (!teamMode() || match.serverId === p.id);
 
   // ---------- serving ----------
-  if (match.phase === 'serve-wait' && match.server === p.side) {
+  if (match.phase === 'serve-wait' && myServe) {
     p.pos.set(-s * (F.hl - F.serveFromBack), 0, 0); p.vel.set(0, 0, 0);
     p.facing = s > 0 ? Math.PI / 2 : -Math.PI / 2;
     run = false;
-    cpu.serveT += dt; cpu.served = false;
-    if (cpu.serveT > L.serveDelay) { cpu.serveT = 0; cpuPickAim(); cpuToss(); }
-  } else if (match.phase === 'serve-toss' && match.server === p.side) {
+    ai.serveT += dt; ai.served = false;
+    if (ai.serveT > L.serveDelay) { ai.serveT = 0; cpuPickAim(p, ai); cpuToss(p); }
+  } else if (match.phase === 'serve-toss' && myServe) {
     run = false;
-    if (!cpu.served && ball.vy < 0 && ball.y <= 1.15) { cpu.served = true; cpuShot('K', cpuRollTier()); }
-  } else cpu.serveT = 0;
+    if (!ai.served && ball.vy < 0 && ball.y <= 1.15) { ai.served = true; cpuShot(p, ai, 'K', cpuRollTier()); }
+  } else ai.serveT = 0;
 
   // ---------- rally ----------
   if (ballLive && match.phase === 'rally') {
-    if (cpu.serial !== ballSerial) {                 // new flight: re-read the ball
-      cpu.serial = ballSerial;
-      cpu.swung = false; cpu.target = null;
+    if (ai.serial !== ballSerial) {                 // new flight: re-read the ball
+      ai.serial = ballSerial;
+      ai.swung = false; ai.target = null;
       const own = match.last === p.side;             // my own set/control coming back down
-      cpu.reactT = own ? 0.08 : L.react * (0.8 + Math.random() * 0.4);
+      ai.reactT = own ? 0.08 : L.react * (0.8 + Math.random() * 0.4);
       const firstTouch = match.poss !== p.side || match.cnt === 0;
       const attack = isAttack(match.lastPart) && match.last !== p.side;
-      cpu.digOk = attack ? Math.random() < L.dig : true;
+      ai.digOk = attack ? Math.random() < L.dig : true;
       // reading an out ball: let it drop (easy CPUs misjudge sometimes)
       const out = landingCache && (landingCache.type === 'board' || !P.inCourt(landingCache.x, landingCache.z)) && P.sideOfX(landingCache.x) === p.side;
-      cpu.willPlay = !(firstTouch && out && Math.random() < L.readOut);
+      ai.willPlay = !(firstTouch && out && Math.random() < L.readOut) && (!teamMode() || isChaser(p));
       // plan for this touch
       const c = match.poss === p.side ? match.cnt : 0;
-      if (attack) cpu.plan = 'dig';
-      else if (c === 0) cpu.plan = Math.random() < 0.75 ? 'control' : 'kick';
-      else if (c === 1) cpu.plan = Math.random() < L.spike ? 'set' : 'kick';
-      else cpu.plan = match.settled && Math.abs(ball.x) < 3.4 ? 'spike' : 'kick';
-      if (c === 1 && cpu.plan === 'kick' && match.settled && Math.random() < L.spike * 0.6) cpu.plan = 'spike';
+      if (attack) ai.plan = 'dig';
+      else if (c === 0) ai.plan = Math.random() < 0.75 ? 'control' : 'kick';
+      else if (c === 1) ai.plan = Math.random() < L.spike ? 'set' : 'kick';
+      else ai.plan = match.settled && Math.abs(ball.x) < 3.4 ? 'spike' : 'kick';
+      if (c === 1 && ai.plan === 'kick' && match.settled && Math.random() < L.spike * 0.6) ai.plan = 'spike';
     }
     const coming = (landingCache && P.sideOfX(landingCache.x) === p.side) || P.sideOfX(ball.x) === p.side;
-    if (coming && cpu.willPlay && !cpu.swung) {
-      if (cpu.reactT > 0) cpu.reactT -= dt;
+    if (coming && ai.willPlay && !ai.swung) {
+      if (ai.reactT > 0) ai.reactT -= dt;
       else {
-        const h = cpu.plan === 'spike' ? 2.45 : cpu.plan === 'dig' ? 0.9 : 0.95;
-        if (!cpu.target) cpu.target = cpuIntercept(h);
-        if (cpu.target) { tx = cpu.target.x - s * (cpu.plan === 'spike' ? 0.15 : 0.35); tz = cpu.target.z; }   // just behind the contact point
+        const h = ai.plan === 'spike' ? 2.45 : ai.plan === 'dig' ? 0.9 : 0.95;
+        if (!ai.target) ai.target = cpuIntercept(p, h);
+        if (ai.target) { tx = ai.target.x - s * (ai.plan === 'spike' ? 0.15 : 0.35); tz = ai.target.z; }   // just behind the contact point
         // jump for the spike as the set drops
-        if (cpu.plan === 'spike' && p.y <= 0 && ball.vy < 0 && ball.y < 3.25 && Math.hypot(ball.x - p.pos.x, ball.z - p.pos.z) < 1.1) {
+        if (ai.plan === 'spike' && p.y <= 0 && ball.vy < 0 && ball.y < 3.25 && Math.hypot(ball.x - p.pos.x, ball.z - p.pos.z) < 1.1) {
           p.vy = JUMP_V; sfx.jump(); fx.dust(p.pos.x, p.pos.z, 12);
-          them.tele = cpu.cell || cpuPickAim();
+          p.tele = ai.cell || cpuPickAim(p, ai);
         }
         // hit when the ball is in reach
         const d = Math.hypot(ball.x - p.pos.x, ball.z - p.pos.z), hr = ball.y - p.y;
         const inReach = d < 0.9 && ball.vy < 0 && (p.y > 0.12 ? hr < 2.2 && hr > 1.0 : hr < 1.35 && hr > 0.35);
         if (inReach && P.sideOfX(ball.x) === p.side) {
-          cpu.swung = true;
+          ai.swung = true;
           const tier = cpuRollTier();
-          if (cpu.plan === 'dig') { if (cpu.digOk) cpuShot('DIG', 2); }
-          else if (cpu.plan === 'control' || cpu.plan === 'set') cpuShot('J', tier);
-          else cpuShot('K', tier);
-          them.tele = null;
+          if (ai.plan === 'dig') { if (ai.digOk) cpuShot(p, ai, 'DIG', 2); }
+          else if (ai.plan === 'control' || ai.plan === 'set') cpuShot(p, ai, 'J', tier);
+          else cpuShot(p, ai, 'K', tier);
+          p.tele = null;
         }
       }
     }
@@ -3309,7 +3390,7 @@ function updateCamera() {
 /* =====================================================================
    Networking — PeerJS (WebRTC), no game server
    ===================================================================== */
-const PROTOCOL = 5;   // 5: attack aim in position packets, dig + stuff-block touches
+const PROTOCOL = 6;   // 6: rooms (1v1 / 2v1 / 2v2) — the guest waits for the host's hello; touches + positions carry a player id
 const PREFIX = 'takraw-iso-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 let peer = null, conn = null, sendTimer = null, pingTimer = null;
@@ -3382,6 +3463,7 @@ function spawnRemote(side, name) {
 }
 
 function onRemoteState(msg) {
+  if (teamMode()) { onTeamState(msg); return; }
   if (!them) return;
   if (Number.isFinite(msg.q)) { if (msg.q <= lastPosSeq) return; lastPosSeq = msg.q; }   // drop out-of-order packets
   const n = (v) => (Number.isFinite(v) ? v : 0);
@@ -3401,6 +3483,10 @@ function wireConnection(c) {
   conn = c;
   c.on('open', () => {
     c.send({ t: 'hello', name: myName, v: PROTOCOL });
+    if (mode === 'guest') return;          // the guest waits for the host's hello: it says whether this is a 1v1 or a team room
+    begin1v1(c);
+  });
+  const begin1v1 = (c) => {
     startGame(mode === 'host' ? 'left' : 'right');
     spawnRemote(mode === 'host' ? 'right' : 'left', 'Opponent');
     setStatus('');
@@ -3417,9 +3503,14 @@ function wireConnection(c) {
         ...(() => { const a = aimTarget(me); return { ax: +a.x.toFixed(2), az: +a.z.toFixed(2) }; })() });
     }, 1000 / 30);
     pingTimer = setInterval(() => { if (conn && conn.open) conn.send({ t: 'ping', ts: performance.now() }); }, 1500);
-  });
+  };
   c.on('data', (msg) => {
     if (!msg || typeof msg !== 'object') return;
+    if (msg.t === 'hello' && mode === 'guest' && !playing && !teamMode()) {
+      if (msg.fmt && msg.fmt !== '1v1') { joinRoom(msg); return; }
+      begin1v1(c);
+    }
+    if (teamMode()) { onGuestTeamData(msg); return; }
     if (msg.t === 'hello' && them) {
       const n = String(msg.name || 'Opponent').slice(0, 14);
       them.displayName = n;
@@ -3442,6 +3533,8 @@ function wireConnection(c) {
       if (msg.r === match.rally && (msg.loser === 'left' || msg.loser === 'right')) applyPoint(msg.loser, String(msg.reason || 'IN'));
     } else if (msg.t === 'rematch' && mode === 'host') {
       resetMatch();
+    } else if (msg.t === 'full') {
+      teardown(); showScreen('home'); showError('That room is full.');
     }
   });
   c.on('close', () => {
@@ -3449,6 +3542,11 @@ function wireConnection(c) {
     conn = null;
     if (posConn) { try { posConn.close(); } catch {} posConn = null; }
     clearInterval(sendTimer); clearInterval(pingTimer);
+    if (teamMode()) {                      // team room: the host is gone, so is the game
+      ballLive = false; match.phase = 'wait'; onMatchChanged('wait');
+      if (playing) setStatus('Host left the game'); else { teardown(); showScreen('home'); showError('The host closed the room.'); }
+      return;
+    }
     if (them) { them.dispose(); them = null; }
     setBoardNames();
     ballLive = false; match.phase = 'wait'; onMatchChanged('wait');
@@ -3456,6 +3554,224 @@ function wireConnection(c) {
     setStatus(mode === 'host' ? 'Opponent left — waiting for someone to join…' : 'Host left the game');
   });
   c.on('error', (e) => console.warn('conn error', e));
+}
+
+/* =====================================================================
+   TEAM ROOMS (2v1 / 2v2) — the host is the hub: guests talk only to the host, which relays
+   positions and touches to everyone else and runs every CPU. 1v1 rooms never get here.
+   ===================================================================== */
+const links = new Map();          // host only: guest peer id → { conn, pos, id }
+let guestSeq = 0;
+function netSend(msg, except = null) {
+  if (mode === 'host') { for (const L of links.values()) if (L.conn !== except && L.conn.open) L.conn.send(msg); }
+  else if (conn && conn.open) conn.send(msg);
+}
+function buildRoster(f) {
+  const slots = f === '2v2' ? [['left', 'front'], ['left', 'back'], ['right', 'front'], ['right', 'back']]
+    : f === '2v1' ? [['left', 'front'], ['left', 'back'], ['right', 'solo']]
+    : [['left', 'solo'], ['right', 'solo']];
+  const L = slots.map(([side, pos]) => ({ side, pos, kind: 'open', id: null, name: '' }));
+  // keep the people already in the room (host first)
+  const humans = roster.filter((r) => r.kind === 'human');
+  if (!humans.some((h) => h.id === 'h')) humans.unshift({ id: 'h', name: myName, kind: 'human' });
+  const order = [1, 0, 2, 3].filter((i) => i < L.length);   // host takes the back (serving) spot
+  for (const h of humans) { const i = order.find((k) => L[k].kind === 'open'); if (i === undefined) break; Object.assign(L[i], { kind: 'human', id: h.id, name: h.name }); }
+  return L;
+}
+const rosterPublic = () => roster.map((r) => ({ side: r.side, pos: r.pos, kind: r.kind, id: r.id, name: r.name }));
+function sendRoster() { if (mode === 'host') netSend({ t: 'roster', fmt, roster: rosterPublic() }); }
+function setFormat(f) {
+  if (mode !== 'host' || playing || f === fmt) return;
+  const humans = roster.filter((r) => r.kind === 'human').length;
+  const cap = f === '2v2' ? 4 : f === '2v1' ? 3 : 2;
+  if (humans > cap || (f === '1v1' && humans > 1)) return;     // can't squeeze people out
+  fmt = f;
+  roster = buildRoster(f);
+  sendRoster(); renderRoom();
+}
+let cpuSeq = 0;
+function slotAction(i, act) {
+  const r = roster[i];
+  if (!r) return;
+  if (mode !== 'host') { if (act === 'move' && conn && conn.open) conn.send({ t: 'move', i }); return; }
+  if (act === 'cpu' && r.kind === 'open') Object.assign(r, { kind: 'cpu', id: 'c' + (++cpuSeq), name: `CPU · ${cpuLevel}` });
+  else if (act === 'rm' && r.kind === 'cpu') Object.assign(r, { kind: 'open', id: null, name: '' });
+  else if (act === 'move' && r.kind === 'open') moveTo('h', i);
+  sendRoster(); renderRoom();
+}
+function moveTo(id, i) {
+  const from = roster.find((r) => r.id === id), to = roster[i];
+  if (!from || !to || to.kind !== 'open') return;
+  Object.assign(to, { kind: 'human', id, name: from.name });
+  Object.assign(from, { kind: 'open', id: null, name: '' });
+}
+function renderRoom() {
+  const box = $('room');
+  const host = mode === 'host';
+  const team = teamMode();
+  box.classList.remove('hidden');
+  for (const b of box.querySelectorAll('.room-fmt button')) {
+    b.classList.toggle('on', b.dataset.fmt === fmt);
+    b.disabled = !host;
+  }
+  $('room-fmt').classList.toggle('readonly', !host);
+  $('room-cols').classList.toggle('hidden', !team);
+  $('room-start').classList.toggle('hidden', !(host && team));
+  if (!team) { ui.waitStatus.textContent = host ? (peer && peer.open ? 'Waiting for opponent to join…' : ui.waitStatus.textContent) : ui.waitStatus.textContent; return; }
+  for (const side of ['left', 'right']) {
+    const col = $(`room-${side}`);
+    col.textContent = '';
+    const head = document.createElement('div'); head.className = 'room-head ' + side; head.textContent = side === 'left' ? 'Team A' : 'Team B';
+    col.appendChild(head);
+    roster.forEach((r, i) => {
+      if (r.side !== side) return;
+      const row = document.createElement('div'); row.className = 'room-slot ' + r.kind + (r.id === myId ? ' me' : '');
+      const nm = document.createElement('span'); nm.className = 'rs-name';
+      nm.textContent = r.kind === 'open' ? 'Open' : r.name + (r.id === myId ? ' (you)' : r.id === 'h' ? ' (host)' : '');
+      row.appendChild(nm);
+      const btn = (label, act, cls = '') => { const b = document.createElement('button'); b.className = 'rs-btn ' + cls; b.textContent = label; b.onclick = () => { slotAction(i, act); }; row.appendChild(b); };
+      if (r.kind === 'open') { btn('Move here', 'move'); if (host) btn('+ CPU', 'cpu', 'add'); }
+      if (r.kind === 'cpu' && host) btn('✕', 'rm', 'rm');
+      col.appendChild(row);
+    });
+  }
+  const open = roster.filter((r) => r.kind === 'open').length;
+  $('room-start').textContent = open ? `Start · fill ${open} with CPU` : 'Start';
+  ui.waitStatus.textContent = host ? (open ? 'Share the code — open spots can be friends or CPUs' : 'Everyone’s in') : 'Waiting for the host to start…';
+}
+function teamStart() {
+  if (mode !== 'host' || playing) return;
+  for (const r of roster) if (r.kind === 'open') Object.assign(r, { kind: 'cpu', id: 'c' + (++cpuSeq), name: `CPU · ${cpuLevel}` });
+  netSend({ t: 'start', fmt, roster: rosterPublic() });
+  startTeamGame(rosterPublic());
+}
+function startTeamGame(list) {
+  roster = list;
+  const mine = list.find((r) => r.id === myId);
+  if (!mine) return;
+  startGame(mine.side);
+  me.id = myId; me.slot = mine.pos;
+  me.pos.copy(teamSpawn(mine.side, mine.pos));
+  for (const p of others.values()) p.dispose();
+  others.clear();
+  for (const r of list) {
+    if (r.id === myId) continue;
+    const p = createPlayer(r.side, r.name, r.side === mine.side ? 'mate' : 'opp');
+    p.id = r.id; p.slot = r.pos; p.displayName = r.name; p.lastSeq = -1;
+    p.kind = mode === 'host' && r.kind === 'cpu' ? 'cpu' : 'remote';
+    p.pos.copy(teamSpawn(r.side, r.pos));
+    p.facing = r.side === 'left' ? Math.PI / 2 : -Math.PI / 2;
+    p.target = { x: p.pos.x, z: p.pos.z, y: 0, r: p.facing, s: 0 };
+    if (p.kind === 'cpu') p.ai = newAI();
+    animatePlayer(p, 0, 0);
+    others.set(p.id, p);
+  }
+  them = focusOpponent();
+  ui.ping.textContent = `${roomCode} · ${fmt}`;
+  clearInterval(sendTimer); clearInterval(pingTimer);
+  sendTimer = setInterval(teamTick, 1000 / 30);
+  pingTimer = setInterval(() => netSend({ t: 'ping', ts: performance.now() }), 1500);
+  if (mode === 'host') { for (const L of links.values()) L.seen = performance.now(); resetMatch(); }
+  else if (peer) wirePos(peer.connect(PREFIX + roomCode, { reliable: false, serialization: 'json', label: 'pos' }));
+}
+const statePkt = (p, id, tele, aim) => ({ t: 's', id, q: (p.seq = (p.seq || 0) + 1), x: +p.pos.x.toFixed(3), z: +p.pos.z.toFixed(3), y: +p.y.toFixed(3),
+  r: +p.facing.toFixed(3), s: +Math.hypot(p.vel.x, p.vel.z).toFixed(2),
+  tx: tele ? +tele.x.toFixed(2) : null, tz: tele ? +tele.z.toFixed(2) : null, ax: aim ? +aim.x.toFixed(2) : null, az: aim ? +aim.z.toFixed(2) : null });
+function teamTick() {
+  if (!me || !playing) return;
+  const mine = statePkt(me, myId, myTele, aimTarget(me));
+  if (mode === 'host') {
+    // a closed tab doesn't always fire 'close' — 5 s of silence counts as gone
+    for (const L of [...links.values()]) if (performance.now() - L.seen > 5000) { teamLeave(L.conn); try { L.conn.close(); } catch {} }
+    const pk = [mine];
+    for (const p of others.values()) if (p.kind === 'cpu') pk.push(statePkt(p, p.id, p.tele, p.aim));
+    for (const L of links.values()) { const ch = L.pos && L.pos.open ? L.pos : L.conn; if (ch.open) for (const m of pk) ch.send(m); }
+  } else {
+    const ch = posConn && posConn.open ? posConn : conn;
+    if (ch && ch.open) ch.send(mine);
+  }
+}
+function onTeamState(msg) {
+  const p = others.get(msg.id);
+  if (!p || p.kind === 'cpu') return;
+  if (Number.isFinite(msg.q)) { if (msg.q <= p.lastSeq) return; p.lastSeq = msg.q; }
+  const n = (v) => (Number.isFinite(v) ? v : 0);
+  p.target = { x: n(msg.x), z: n(msg.z), y: n(msg.y), r: n(msg.r), s: n(msg.s) };
+  p.tele = Number.isFinite(msg.tx) && Number.isFinite(msg.tz) ? { x: msg.tx, z: msg.tz } : null;
+  p.aim = Number.isFinite(msg.ax) && Number.isFinite(msg.az) ? { x: msg.ax, z: msg.az } : null;
+}
+// host: a guest knocks on a team room
+function teamAccept(c) {
+  if (c.label === 'pos') {
+    const L = links.get(c.peer);
+    if (!L) { c.on('open', () => c.close()); return; }
+    L.pos = c;
+    c.on('data', (msg) => { if (msg && msg.t === 's') hostGotState(msg, L); });
+    c.on('close', () => { if (L.pos === c) L.pos = null; });
+    c.on('error', () => {});
+    return;
+  }
+  c.on('open', () => {
+    const slot = playing ? null : roster.find((r) => r.kind === 'open');
+    if (!slot) { c.send({ t: 'full' }); setTimeout(() => { try { c.close(); } catch {} }, 400); return; }
+    const id = 'g' + (++guestSeq);
+    Object.assign(slot, { kind: 'human', id, name: 'Player' });
+    links.set(c.peer, { conn: c, pos: null, id, seen: performance.now() });
+    c.send({ t: 'hello', name: myName, v: PROTOCOL, fmt, you: id });
+    sendRoster(); renderRoom();
+  });
+  c.on('data', (msg) => {
+    const L = links.get(c.peer);
+    if (!L || !msg || typeof msg !== 'object') return;
+    L.seen = performance.now();
+    if (msg.t === 'hello') {
+      const r = roster.find((x) => x.id === L.id);
+      if (r) r.name = String(msg.name || 'Player').slice(0, 14);
+      const p = others.get(L.id); if (p) p.displayName = r ? r.name : p.displayName;
+      sendRoster(); renderRoom();
+    } else if (msg.t === 's') hostGotState(msg, L);
+    else if (msg.t === 'ping') c.send({ t: 'pong', ts: msg.ts });
+    else if (msg.t === 'pong' && Number.isFinite(msg.ts)) { rtt = rtt * 0.7 + (performance.now() - msg.ts) * 0.3; ui.ping.textContent = `${roomCode} · ${fmt} · ${Math.round(rtt)} ms`; }
+    else if (msg.t === 'touch') { msg.id = L.id; onRemoteTouch(msg); netSend(msg, c); }
+    else if (msg.t === 'end') { if (msg.r === match.rally && (msg.loser === 'left' || msg.loser === 'right')) applyPoint(msg.loser, String(msg.reason || 'IN')); }
+    else if (msg.t === 'move' && !playing) { moveTo(L.id, msg.i | 0); sendRoster(); renderRoom(); }
+  });
+  c.on('close', () => teamLeave(c));
+  c.on('error', () => {});
+}
+function hostGotState(msg, L) {
+  L.seen = performance.now();
+  msg.id = L.id;
+  onTeamState(msg);
+  for (const O of links.values()) { if (O === L) continue; const ch = O.pos && O.pos.open ? O.pos : O.conn; if (ch.open) ch.send(msg); }
+}
+function teamLeave(c) {
+  const L = links.get(c.peer);
+  if (!L) return;
+  links.delete(c.peer);
+  const r = roster.find((x) => x.id === L.id);
+  if (!playing) { if (r) Object.assign(r, { kind: 'open', id: null, name: '' }); sendRoster(); renderRoom(); return; }
+  // mid-match: a CPU takes over their spot so the game goes on
+  const p = others.get(L.id);
+  if (r) { r.kind = 'cpu'; r.name = `CPU · ${cpuLevel}`; }
+  if (p) { p.kind = 'cpu'; p.ai = newAI(); p.displayName = r ? r.name : 'CPU'; }
+  showBanner('Player left', 'a CPU took their spot', 'var(--orange)');
+}
+// guest side of a team room
+function joinRoom(msg) {
+  fmt = msg.fmt; myId = String(msg.you || 'g?');
+  if (msg.v !== PROTOCOL) setStatus('Host is on a different version — both of you refresh the page');
+  ui.waitStatus.textContent = 'Waiting for the host to start…';
+  renderRoom();
+}
+function onGuestTeamData(msg) {
+  if (msg.t === 'roster') { if (!playing) { fmt = msg.fmt; roster = msg.roster || []; renderRoom(); } }
+  else if (msg.t === 'start') { if (!playing) { fmt = msg.fmt; startTeamGame(msg.roster || []); } }
+  else if (msg.t === 's') onTeamState(msg);
+  else if (msg.t === 'ping') conn.send({ t: 'pong', ts: msg.ts });
+  else if (msg.t === 'pong' && Number.isFinite(msg.ts)) { rtt = rtt * 0.7 + (performance.now() - msg.ts) * 0.3; ui.ping.textContent = `${roomCode} · ${fmt} · ${Math.round(rtt)} ms`; }
+  else if (msg.t === 'touch') { if (msg.id !== myId) onRemoteTouch(msg); }
+  else if (msg.t === 'match') onRemoteMatch(msg.m);
 }
 
 /* =====================================================================
@@ -3476,7 +3792,9 @@ function claimLobbySlot(i = 0) {
   });
   sp.on('connection', (c) => {
     c.on('open', () => {
-      try { c.send({ t: 'lobby', v: PROTOCOL, code: roomCode, host: myName, open: !(conn && conn.open), born: lobbyBorn }); } catch {}
+      const filled = roster.filter((r) => r.kind !== 'open').length;
+      const open = teamMode() ? !playing && roster.some((r) => r.kind === 'open') : !(conn && conn.open);
+      try { c.send({ t: 'lobby', v: PROTOCOL, code: roomCode, host: myName, open, born: lobbyBorn, fmt, n: filled, cap: roster.length }); } catch {}
       setTimeout(() => { try { c.close(); } catch {} }, 2000);
     });
   });
@@ -3510,7 +3828,8 @@ function refreshLobbies() {
       probeEnders.set(id, end);
       c.on('data', (msg) => {
         if (msg && msg.t === 'lobby' && msg.v === PROTOCOL && msg.open && /^[A-Z0-9]{4}$/.test(msg.code || '')) {
-          found.push({ code: msg.code, host: String(msg.host || 'Player').slice(0, 14), born: Number(msg.born) || 0 });
+          found.push({ code: msg.code, host: String(msg.host || 'Player').slice(0, 14), born: Number(msg.born) || 0,
+            fmt: ['1v1', '2v1', '2v2'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2 });
         }
         end();
       });
@@ -3546,7 +3865,7 @@ function renderLobbies(list) {
     const row = document.createElement('div');
     row.className = 'lobby-row';
     const host = document.createElement('span'); host.className = 'lr-host'; host.textContent = L.host;
-    const code = document.createElement('span'); code.className = 'lr-code'; code.textContent = L.code;
+    const code = document.createElement('span'); code.className = 'lr-code'; code.textContent = L.fmt === '1v1' ? L.code : `${L.code} · ${L.fmt} · ${L.n}/${L.cap}`; if (L.fmt !== '1v1') code.classList.add('team');
     const btn = document.createElement('button'); btn.className = 'btn outline lr-join'; btn.textContent = 'Join';
     btn.onclick = () => { ui.code.value = L.code; joinGame(); };
     row.append(host, code, btn);
@@ -3560,10 +3879,13 @@ function hostGame(attempt = 0) {
   roomCode = randomCode();
   ui.waitCode.textContent = roomCode;
   ui.waitStatus.textContent = 'Connecting to matchmaking…';
+  fmt = '1v1'; myId = 'h'; roster = buildRoster('1v1');
   showScreen('wait');
+  renderRoom();
   peer = new Peer(PREFIX + roomCode);
-  peer.on('open', () => { ui.waitStatus.textContent = 'Waiting for opponent to join…'; lobbyBorn = Date.now(); claimLobbySlot(0); });
+  peer.on('open', () => { ui.waitStatus.textContent = 'Waiting for opponent to join…'; lobbyBorn = Date.now(); claimLobbySlot(0); renderRoom(); });
   peer.on('connection', (c) => {
+    if (teamMode()) { teamAccept(c); return; }
     if (c.label === 'pos') {                      // the guest's position channel
       if (conn && conn.open && c.peer === conn.peer) wirePos(c); else c.on('open', () => c.close());
       return;
@@ -3610,6 +3932,11 @@ function teardown() {
   if (posConn) { try { posConn.close(); } catch {} posConn = null; }
   if (conn) { try { conn.close(); } catch {} conn = null; }
   if (peer) { try { peer.destroy(); } catch {} peer = null; }
+  for (const L of links.values()) { try { L.conn.close(); } catch {} try { L.pos && L.pos.close(); } catch {} }
+  links.clear();
+  if (others.size) { for (const p of others.values()) p.dispose(); others.clear(); them = null; }
+  fmt = '1v1'; roster = []; myId = 'h';
+  $('room').classList.add('hidden');
   if (me) { me.dispose(); me = null; }
   if (them) { them.dispose(); them = null; }
   playing = false;
@@ -3635,6 +3962,8 @@ for (const b of document.querySelectorAll('.cpu-lvl')) {
   };
 }
 $('cancel-btn').onclick = () => { teardown(); showScreen('home'); };
+for (const b of document.querySelectorAll('.room-fmt button')) b.onclick = () => setFormat(b.dataset.fmt);
+$('room-start').onclick = teamStart;
 $('leave-btn').onclick = () => { teardown(); showScreen('home'); };
 $('go-leave').onclick = () => { teardown(); showScreen('home'); };
 $('rematch-btn').onclick = () => { if (isAuthority()) resetMatch(); };
@@ -3663,7 +3992,7 @@ startLobbyBrowser();
 document.getElementById('lobby-refresh').onclick = () => { const el = document.getElementById('lobby-list'); if (el && !probing) el.innerHTML = '<p class="lobby-empty">Looking for games…</p>'; refreshLobbies(); };
 
 // debug hook for automated testing
-window.__takraw = { get me() { return me; }, get them() { return them; }, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
+window.__takraw = { get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
   // test helpers: an incoming smash from the other side, and the block effects
   debugSmash: (tx, tz, v = 16) => { const sOpp = -sideSign(me.side); setBall(P.solveSpeed({ x: sOpp * 1.2, y: 2.9, z: 0 }, { x: tx, z: tz }, v)); ballLive = true;
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
