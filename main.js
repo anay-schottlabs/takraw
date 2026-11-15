@@ -1444,7 +1444,7 @@ function updateSideGlow(dt) {
   let oc = null;
   if (ballLive && landingCache) {
     const out = landingCache.type === 'board' || !P.inCourt(landingCache.x, landingCache.z);
-    oc = !out && P.sideOfX(landingCache.x) === me.side ? 0x3d8bff : null;   // blue only when it's coming into your court
+    oc = out ? 0xffffff : P.sideOfX(landingCache.x) === me.side ? 0x3d8bff : null;   // blue = coming to you, white = going out, nothing otherwise
   } else if (side) oc = side === me.side ? 0x3d8bff : null;        // held for the serve, etc.
   ballOutline.visible = oc !== null;
   if (oc !== null) ballOutline.material.color.set(oc).multiplyScalar(oc === 0xffffff ? 1.6 : 1.4);
