@@ -1117,8 +1117,8 @@ function createPlayer(side, name, teamKey = side, look = null) {
     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.012, 8, 6), dark); eye.position.set(sx * 0.034, HY + 0.01, 0.097); headG.add(eye);
     const brow = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.008, 0.01), hairMat); brow.position.set(sx * 0.035, HY + 0.035, 0.098); brow.rotation.z = -sx * 0.12; headG.add(brow);
   }
-  buildHair(headG, LOOK_OPTS.hair[L.hair], hairMat, HY, M);
-  M(new THREE.TorusGeometry(0.104, 0.015, 8, 26), band, headG, 0, HY + 0.045, 0.002).rotation.x = Math.PI / 2;   // team headband
+  const bandR = buildHair(headG, LOOK_OPTS.hair[L.hair], hairMat, HY, M);
+  M(new THREE.TorusGeometry(bandR, 0.017, 8, 26), band, headG, 0, HY + 0.045, 0.002).rotation.x = Math.PI / 2;   // team headband
 
   // glow ring at the feet (team colour: blue = your side, red = theirs)
   const ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(team.jersey).multiplyScalar(RING_GLOW), transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
@@ -1147,42 +1147,47 @@ function createPlayer(side, name, teamKey = side, look = null) {
   return p;
 }
 function buildHair(headG, style, mat, HY, M) {
-  const cap = (scaleY = 1.08, thick = 0.109, cut = 0.55) => {
-    const m = M(new THREE.SphereGeometry(thick, 22, 14, 0, Math.PI * 2, 0, Math.PI * cut), mat, headG, 0, HY + 0.015, -0.006);
-    m.scale.set(0.97, scaleY, 1.03); return m;
+  // hair is drawn big and chunky so each style reads from the game camera; returns the headband radius to sit over it
+  const cap = (thick = 0.122, cut = 0.56, sy = 1.12) => {
+    const m = M(new THREE.SphereGeometry(thick, 22, 14, 0, Math.PI * 2, 0, Math.PI * cut), mat, headG, 0, HY + 0.018, -0.01);
+    m.scale.set(0.98, sy, 1.06); return m;
   };
   switch (style) {
-    case 'buzz': cap(1.06, 0.107, 0.5); break;
+    case 'buzz': cap(0.114, 0.52, 1.08); return 0.112;
     case 'spiky':
-      cap(1.08, 0.109, 0.55);
-      for (let i = 0; i < 9; i++) {
-        const a = (i / 9) * Math.PI * 2, r = i % 2 ? 0.06 : 0.03;
-        const sp = M(new THREE.ConeGeometry(0.03, 0.08, 6), mat, headG, Math.cos(a) * r, HY + 0.11, Math.sin(a) * r - 0.01);
-        sp.rotation.set(Math.sin(a) * 0.5, 0, -Math.cos(a) * 0.5);
-      } break;
+      cap(0.12, 0.56, 1.1);
+      for (let i = 0; i < 13; i++) {
+        const ring = i < 5 ? 0 : i < 13 ? 1 : 2, a = (i / (ring ? 8 : 5)) * Math.PI * 2 + ring * 0.4, r = ring ? 0.075 : 0.03;
+        const sp = M(new THREE.ConeGeometry(0.042, 0.16, 6), mat, headG, Math.cos(a) * r, HY + 0.13 - ring * 0.02, Math.sin(a) * r - 0.015);
+        sp.rotation.set(Math.sin(a) * (0.35 + ring * 0.5), 0, -Math.cos(a) * (0.35 + ring * 0.5));
+      }
+      return 0.12;
     case 'bun':
-      cap(1.08, 0.109, 0.55);
-      M(new THREE.SphereGeometry(0.048, 14, 12), mat, headG, 0, HY + 0.13, -0.035);
-      break;
+      cap(0.12, 0.56, 1.1);
+      M(new THREE.SphereGeometry(0.075, 16, 12), mat, headG, 0, HY + 0.17, -0.045);
+      M(new THREE.TorusGeometry(0.05, 0.016, 8, 16), mat, headG, 0, HY + 0.13, -0.04).rotation.x = Math.PI / 2;
+      return 0.12;
     case 'ponytail': {
-      cap(1.08, 0.11, 0.58);
-      const tail = M(new THREE.CapsuleGeometry(0.03, 0.16, 4, 8), mat, headG, 0, HY - 0.04, -0.13);
-      tail.rotation.x = 0.35;
-      M(new THREE.SphereGeometry(0.03, 8, 6), mat, headG, 0, HY + 0.04, -0.11);
-      break;
+      cap(0.124, 0.6, 1.1);
+      M(new THREE.SphereGeometry(0.045, 10, 8), mat, headG, 0, HY + 0.05, -0.125);              // tie
+      const tail = M(new THREE.CapsuleGeometry(0.048, 0.3, 4, 10), mat, headG, 0, HY - 0.1, -0.17);
+      tail.rotation.x = 0.75; tail.position.z = -0.2; tail.scale.set(1, 1, 0.8);   // swings out behind so it shows in silhouette
+      return 0.124;
     }
     case 'afro': {
-      const a = M(new THREE.SphereGeometry(0.155, 18, 14), mat, headG, 0, HY + 0.06, -0.025);
-      a.scale.set(1.05, 0.95, 1.0);
-      break;
+      const a = M(new THREE.SphereGeometry(0.19, 20, 16), mat, headG, 0, HY + 0.11, -0.07);       // big, but up and back so the face shows
+      a.scale.set(1.12, 0.95, 0.85);
+      return 0.113;
     }
     case 'mohawk':
-      cap(1.0, 0.106, 0.42).scale.x = 0.9;
-      for (let i = 0; i < 6; i++) {
-        const t = i / 5, z = 0.07 - t * 0.17, y = HY + 0.105 - Math.abs(t - 0.4) * 0.05;
-        M(new THREE.ConeGeometry(0.022, 0.085, 5), mat, headG, 0, y, z).rotation.x = -0.25 + t * 0.6;
-      } break;
-    case 'shaved': default: break;
+      cap(0.108, 0.42, 1.0).scale.x = 0.85;
+      for (let i = 0; i < 7; i++) {
+        const t = i / 6, z = 0.09 - t * 0.21, y = HY + 0.13 - Math.abs(t - 0.4) * 0.06;
+        const fin = M(new THREE.ConeGeometry(0.038, 0.17, 5), mat, headG, 0, y, z);
+        fin.rotation.x = -0.35 + t * 0.8; fin.scale.z = 0.55;
+      }
+      return 0.112;
+    case 'shaved': default: return 0.106;
   }
 }
 
