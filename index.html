@@ -103,6 +103,7 @@
       <div id="screen-home" class="screen">
         <label class="lbl" for="name-input">Your name</label>
         <input id="name-input" class="inp" maxlength="14" placeholder="PLAYER" autocomplete="off" />
+        <button id="custom-btn" class="btn dark">Customize player</button>
 
         <div class="btn-grid">
           <button id="create-btn" class="btn primary">Create game</button>
@@ -126,6 +127,18 @@
         </div>
 
         <button class="btn learn" data-help>How to play</button>
+      </div>
+
+      <div id="screen-custom" class="screen hidden">
+        <p class="lbl">Skin tone</p><div class="cust-row" data-k="skin"></div>
+        <p class="lbl">Hair</p><div class="cust-row text" data-k="hair"></div>
+        <p class="lbl">Hair colour</p><div class="cust-row" data-k="hairColor"></div>
+        <p class="lbl">Jersey</p><div class="cust-row" data-k="jersey"></div>
+        <p class="lbl">Symbol</p><div class="cust-row sym" data-k="symbol"></div>
+        <p class="lbl pv-head">Preview moves <label class="pv-loop"><input type="checkbox" id="pv-loop" checked /> loop</label></p>
+        <div class="cust-row text moves" id="pv-moves"></div>
+        <p class="cust-note">Your headband and the ring at your feet show your team: blue = you, red = them.</p>
+        <div class="cust-actions"><button id="cust-random" class="btn outline">Random</button><button id="cust-done" class="btn primary">Done</button></div>
       </div>
 
       <div id="screen-wait" class="screen hidden">
