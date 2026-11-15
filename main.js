@@ -1314,6 +1314,7 @@ const sideGlow = (() => {
       m.rotation.x = -Math.PI / 2; m.position.set(x, y, z);
       g.add(m);
     }
+    g.visible = false;                      // court halves no longer change colour
     scene.add(g);
     halves[side] = { wash, lineMat, a: 0 };
   }
@@ -1324,24 +1325,16 @@ function teamColor(side) {
   return p ? p.team.jersey : TEAMS[side].jersey;
 }
 let lastBallSide = null;
+const ballTint = new THREE.Color(0xffffff), _tc = new THREE.Color();
 function updateSideGlow(dt) {
   const show = !!me && playing && (ballLive || match.phase === 'serve-wait' || match.phase === 'serve-toss');
   const side = show ? P.sideOfX(ball.x) : null;
-  for (const k of ['left', 'right']) {
-    const H = sideGlow[k];
-    const target = side === k ? 1 : 0;
-    H.a += (target - H.a) * Math.min(1, dt * 10);
-    const pulse = 0.85 + Math.sin(performance.now() / 160) * 0.15;
-    H.wash.material.color.set(teamColor(k)).multiplyScalar(1.0);
-    H.wash.material.opacity = 0.22 * H.a * pulse;
-    H.lineMat.color.set(teamColor(k)).multiplyScalar(1.8);
-    H.lineMat.opacity = 0.95 * H.a;
-  }
-  // the ball wears the colour of the half it's over
-  const col = side ? teamColor(side) : 0xffd27a;
-  ballXray.material.color.set(col).multiplyScalar(1.3);
-  ballHalo.material.color.set(col).multiplyScalar(1.6);
-  ballHalo.material.opacity = side ? 0.75 : 0;
+  for (const k of ['left', 'right']) { sideGlow[k].wash.material.opacity = 0; sideGlow[k].lineMat.opacity = 0; }
+  ballHalo.material.opacity = 0;
+  // the ball itself takes a tint of the team colour of the half it's over (nothing else changes colour)
+  ballTint.set(0xffffff);
+  if (side) ballTint.lerp(_tc.set(teamColor(side)), 0.55);
+  ballMesh.material.color.lerp(ballTint, Math.min(1, dt * 10));
   // HUD chip
   const chip = document.getElementById('side-chip');
   if (chip) {
@@ -1750,7 +1743,7 @@ let blockCd = 0, blockPress = -1e9, pendingCross = null, hitStop = 0;
 const smashWarn = { on: false, inPos: false, announced: false };
 
 /* ---------------- BULLET TIME: power attacks (spike / smash / ultimate) slow the ball, not the players ---------------- */
-const BT_SCALE = 0.25;                    // ball runs at 25% while an attack is in the air
+const BT_SCALE = 0.35;                    // ball runs at 35% while an attack is in the air
 let btScale = 1, btWas = false, btRingT = 0, btDroneStop = null;
 const btActive = () => ballLive && match.phase === 'rally' && isAttack(match.lastPart);
 const toReal = (tau) => tau / (BALL_TIME * Math.max(0.05, btScale));   // ball-time → real seconds right now
@@ -2974,9 +2967,9 @@ function updateCamera() {
   // tighter focus while the ball is live
   const live = ballLive ? 1 : 0;
   const bt = 1 - (btScale - BT_SCALE) / (1 - BT_SCALE);     // 0 normal … 1 full bullet time
-  focusPass.uniforms.uStrength.value += ((live ? 0.55 : 0.4) + bt * 0.3 - focusPass.uniforms.uStrength.value) * 0.08;
-  focusPass.uniforms.uDesat.value += ((live ? 0.65 : 0.4) + bt * 0.3 - focusPass.uniforms.uDesat.value) * 0.08;
-  focusPass.uniforms.uTint.value.set(1 - bt * 0.12, 1 - bt * 0.04, 1 + bt * 0.12);
+  focusPass.uniforms.uStrength.value += ((live ? 0.55 : 0.4) + bt * 0.08 - focusPass.uniforms.uStrength.value) * 0.08;
+  focusPass.uniforms.uDesat.value += ((live ? 0.65 : 0.4) + bt * 0.06 - focusPass.uniforms.uDesat.value) * 0.08;
+  focusPass.uniforms.uTint.value.set(1, 1, 1);
 }
 
 /* =====================================================================
