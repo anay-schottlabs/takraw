@@ -1444,8 +1444,8 @@ function updateSideGlow(dt) {
   let oc = null;
   if (ballLive && landingCache) {
     const out = landingCache.type === 'board' || !P.inCourt(landingCache.x, landingCache.z);
-    oc = out ? 0xffffff : P.sideOfX(landingCache.x) === me.side ? 0x3d8bff : 0xff3b30;
-  } else if (side) oc = side === me.side ? 0x3d8bff : 0xff3b30;   // held for the serve, etc.
+    oc = out ? 0xffffff : P.sideOfX(landingCache.x) === me.side ? 0x3d8bff : null;   // their-side landings: no outline at all
+  } else if (side) oc = side === me.side ? 0x3d8bff : null;        // held for the serve, etc.
   ballOutline.visible = oc !== null;
   if (oc !== null) ballOutline.material.color.set(oc).multiplyScalar(oc === 0xffffff ? 1.6 : 1.4);
   const chip = null;   // (the YOUR / THEIR BALL chip was removed — the ball colour says it)
