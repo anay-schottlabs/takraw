@@ -13,3 +13,5 @@ Lotus Pond (the 3v3 venue):
 - `pond/water_nor.jpg` — `waternormals.jpg` from the three.js examples (MIT licence, © three.js authors), downsized to 512px — the ripples
 
 Everything else in the courtyard (halls, galleries, chedis, trees, lanterns, the dusk sky) is generated in code in `main.js`; the pond venue's lotus, koi, salas, chedis, trees, candles and fireflies are generated in `pond.js`.
+
+Riverside Pier, Bangkok Rooftop and Night Market Alley are generated in code (`riverside.js`, `rooftop.js`, `market.js`, shared pieces in `props.js`); they reuse the pond's plank + water textures.

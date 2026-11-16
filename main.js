@@ -11,6 +11,9 @@ import { buildPond } from './pond.js';
 import { buildTerrace } from './terrace.js';
 import { MAPS, mapById } from './maps.js';
 import { buildTempleLife } from './temple-life.js';
+import { buildRiverside } from './riverside.js';
+import { buildRooftop } from './rooftop.js';
+import { buildMarket } from './market.js';
 
 /* =====================================================================
    FIELD SPEC — ISTAF sepak takraw court (metres)
@@ -607,7 +610,7 @@ function setCourtSize(size) {
 // court size (3v3 gets the bigger version), cached, and swapped in whole — nothing from one map is visible on another.
 let venue = 'temple';                 // map id on screen
 const venues = {};                    // `${id}:${size}` → { g, fx, update, setTime? }
-const VENUE_BUILDERS = { temple: buildTempleLife, pond: buildPond, terrace: buildTerrace };   // (the temple's buildings live in main.js; this adds its life)
+const VENUE_BUILDERS = { temple: buildTempleLife, pond: buildPond, terrace: buildTerrace, riverside: buildRiverside, rooftop: buildRooftop, market: buildMarket };   // (the temple's buildings live in main.js; this adds its life)
 const venueKey = (id) => `${id}:${courtSize}`;
 function setVenue(id) {
   if (!VENUE_BUILDERS[id]) id = 'temple';
@@ -624,8 +627,15 @@ function setVenue(id) {
   templeGroup.visible = id === 'temple';
   boardsGroup.visible = id === 'temple';
   for (const [key, vn] of Object.entries(venues)) vn.g.visible = key === k;
+  applyFog();
 }
 const currentVenue = () => venues[venueKey(venue)] || null;
+// a map can ask for its own fog distances (e.g. the rooftop wants to see the far skyline)
+function applyFog() {
+  if (!timeOfDay) return;
+  const T = TIMES[timeOfDay], o = currentVenue() && currentVenue().fog && currentVenue().fog[timeOfDay];
+  scene.fog.near = o ? o[0] : T.fogN; scene.fog.far = o ? o[1] : T.fogF;
+}
 function applySpots() {
   const T = TIMES[timeOfDay || 'night'];
   for (const sp of spotLights) { if (sp.userData.base === undefined) sp.userData.base = sp.intensity; sp.intensity = sp.userData.base * T.spots; }
@@ -636,7 +646,8 @@ function setTimeOfDay(t) {
   const T = TIMES[t], sky = skyFor(t);
   scene.background = sky.tex; scene.backgroundIntensity = T.bgI;
   scene.environment = sky.env; scene.environmentIntensity = T.envI;
-  scene.fog.color.set(T.fog); scene.fog.near = T.fogN; scene.fog.far = T.fogF;
+  scene.fog.color.set(T.fog);
+  applyFog();
   key.color.set(T.key); key.intensity = T.keyI; key.position.set(...LIGHT_POS[t]);
   hemi.color.set(T.hemiSky); hemi.groundColor.set(T.hemiGround); hemi.intensity = T.hemiI;
   renderer.toneMappingExposure = T.exposure;
