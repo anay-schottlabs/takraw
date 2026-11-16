@@ -336,3 +336,5 @@ button { font-family: inherit; }
 .cust-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
 #menu.customizing .title { font-size: 56px; }
 #menu.customizing .cube { display: none; }
+.rs-btn.lvl { color: var(--text); min-width: 84px; text-align: left; }
+.rs-btn.lvl.easy { color: #5fd38a; } .rs-btn.lvl.normal { color: var(--blue); } .rs-btn.lvl.hard { color: var(--orange); } .rs-btn.lvl.train { color: #ff5a5a; }

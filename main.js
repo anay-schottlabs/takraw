@@ -3377,7 +3377,10 @@ try { trainDrill = localStorage.getItem('takraw-drill') || 'mixed'; } catch {}
 const DRILLS = ['mixed', 'smash', 'spike', 'clear', 'kick', 'feint'];
 const DRILL_NAMES = { mixed: 'Mixed', smash: 'Always smash', spike: 'Set + spike', clear: 'High clear', kick: 'Kick back', feint: 'Feint' };
 const cpuMoveNow = () => (training ? trainDrill : 'mixed');
-const cpuL = () => CPU_LEVELS[training ? 'train' : cpuLevel];
+// each CPU can have its own level (team rooms); training = the unbeatable bot
+const cpuLvlOf = (p) => (training ? 'train' : (p && p.level) || cpuLevel);
+const cpuL = (p) => CPU_LEVELS[cpuLvlOf(p)];
+const LEVEL_NAMES = { easy: 'Easy', normal: 'Normal', hard: 'Hard', train: 'Unbeatable' };
 function setDrill(d) {
   if (!DRILLS.includes(d)) return;
   trainDrill = d;
@@ -3389,8 +3392,8 @@ const cpu = { serial: -1, reactT: 0, target: null, plan: null, swung: false, ser
 let ballSerial = 0;                      // bumps every time the ball's flight changes (any touch)
 
 const cpuOn = () => mode === 'cpu' && !!them;
-function cpuRollTier() {
-  const L = cpuL(), r = Math.random();
+function cpuRollTier(p) {
+  const L = cpuL(p), r = Math.random();
   return r < L.perfect ? 2 : r < L.perfect + L.good ? 1 : 0;
 }
 // pick one of the 9 spots on my (the human's) side, preferring ones far from where I'm standing
@@ -3549,7 +3552,7 @@ function cpuTryBlock(p, e) {
   const k = shortK(attackLandX()), win = blockWin(k);
   if (!blockGeomOk(e, win, p)) return false;
   ai.goNet = false;
-  const perfect = Math.random() < (training ? 1 : 0.55);
+  const perfect = Math.random() < (cpuLvlOf(p) === 'train' ? 1 : 0.55);
   const s = sideSign(p.side);
   const from = { x: s * 0.12, y: Math.max(e.y, P.netTop(e.z) + 0.15), z: e.z };
   const zIn = (z) => THREE.MathUtils.clamp(z, -(F.hw - 0.4), F.hw - 0.4);
@@ -3567,7 +3570,7 @@ function cpuTryBlock(p, e) {
   return true;
 }
 function cpuThink(p, ai, dt) {
-  const s = sideSign(p.side), L = cpuL();
+  const s = sideSign(p.side), L = cpuL(p);
   if (ai.pickAimSoon && match.phase !== 'serve-toss') { ai.pickAimSoon = false; cpuPickAim(p, ai); }
   let tx = -s * 4.2, tz = 0, run = true;          // home spot: middle of my half
   if (teamMode() && p.slot === 'front') { tx = -s * 2.2; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5); }
@@ -3598,7 +3601,7 @@ function cpuThink(p, ai, dt) {
     if (ai.serveT > L.serveDelay) { ai.serveT = 0; cpuPickAim(p, ai); cpuToss(p); }
   } else if (match.phase === 'serve-toss' && myServe) {
     run = false;
-    if (!ai.served && ball.vy < 0 && ball.y <= 1.15) { ai.served = true; cpuShot(p, ai, 'K', cpuRollTier()); }
+    if (!ai.served && ball.vy < 0 && ball.y <= 1.15) { ai.served = true; cpuShot(p, ai, 'K', cpuRollTier(p)); }
   } else ai.serveT = 0;
 
   // ---------- rally ----------
@@ -3647,7 +3650,7 @@ function cpuThink(p, ai, dt) {
         const inReach = d < 0.9 && ball.vy < 0 && (p.y > 0.12 ? hr < 2.2 && hr > 1.0 : hr < 1.35 && hr > 0.35);
         if (inReach && P.sideOfX(ball.x) === p.side) {
           ai.swung = true;
-          const tier = cpuRollTier();
+          const tier = cpuRollTier(p);
           if (ai.plan === 'dig') { if (ai.digOk) cpuShot(p, ai, 'DIG', 2); }
           else if (ai.plan === 'control' || ai.plan === 'set') cpuShot(p, ai, 'J', tier);
           else if (ai.plan === 'spike' && (cpuMoveNow() === 'feint' || (cpuMoveNow() === 'mixed' && Math.random() < (L.feint || 0)))) cpuShot(p, ai, 'DINK', tier);
@@ -3959,7 +3962,7 @@ function buildRoster(f) {
   for (const h of humans) { const i = order.find((k) => L[k].kind === 'open'); if (i === undefined) break; Object.assign(L[i], { kind: 'human', id: h.id, name: h.name, look: h.look }); }
   return L;
 }
-const rosterPublic = () => roster.map((r) => ({ side: r.side, pos: r.pos, kind: r.kind, id: r.id, name: r.name, look: r.look || null }));
+const rosterPublic = () => roster.map((r) => ({ side: r.side, pos: r.pos, kind: r.kind, id: r.id, name: r.name, look: r.look || null, level: r.level || null }));
 function sendRoster() { if (mode === 'host') netSend({ t: 'roster', fmt, roster: rosterPublic() }); }
 function setFormat(f) {
   if (mode !== 'host' || playing || f === fmt) return;
@@ -3975,8 +3978,13 @@ function slotAction(i, act) {
   const r = roster[i];
   if (!r) return;
   if (mode !== 'host') { if (act === 'move' && conn && conn.open) conn.send({ t: 'move', i }); return; }
-  if (act === 'cpu' && r.kind === 'open') Object.assign(r, { kind: 'cpu', id: 'c' + (++cpuSeq), name: `CPU · ${cpuLevel}`, look: randomLook() });
-  else if (act === 'rm' && r.kind === 'cpu') Object.assign(r, { kind: 'open', id: null, name: '' });
+  if (act === 'cpu' && r.kind === 'open') Object.assign(r, { kind: 'cpu', id: 'c' + (++cpuSeq), name: `CPU · ${LEVEL_NAMES[cpuLevel]}`, level: cpuLevel, look: randomLook() });
+  else if (act === 'rm' && r.kind === 'cpu') Object.assign(r, { kind: 'open', id: null, name: '', level: null });
+  else if (act === 'lvl' && r.kind === 'cpu') {
+    const order = ['easy', 'normal', 'hard', 'train'];
+    r.level = order[(order.indexOf(r.level || cpuLevel) + 1) % order.length];
+    r.name = `CPU · ${LEVEL_NAMES[r.level]}`;
+  }
   else if (act === 'move' && r.kind === 'open') moveTo('h', i);
   sendRoster(); renderRoom();
 }
@@ -4008,11 +4016,11 @@ function renderRoom() {
       if (r.side !== side) return;
       const row = document.createElement('div'); row.className = 'room-slot ' + r.kind + (r.id === myId ? ' me' : '');
       const nm = document.createElement('span'); nm.className = 'rs-name';
-      nm.textContent = r.kind === 'open' ? 'Open' : r.name + (r.id === myId ? ' (you)' : r.id === 'h' ? ' (host)' : '');
+      nm.textContent = r.kind === 'open' ? 'Open' : r.kind === 'cpu' ? (host ? 'CPU' : r.name) : r.name + (r.id === myId ? ' (you)' : r.id === 'h' ? ' (host)' : '');
       row.appendChild(nm);
       const btn = (label, act, cls = '') => { const b = document.createElement('button'); b.className = 'rs-btn ' + cls; b.textContent = label; b.onclick = () => { slotAction(i, act); }; row.appendChild(b); };
       if (r.kind === 'open') { btn('Move here', 'move'); if (host) btn('+ CPU', 'cpu', 'add'); }
-      if (r.kind === 'cpu' && host) btn('✕', 'rm', 'rm');
+      if (r.kind === 'cpu' && host) { btn(LEVEL_NAMES[r.level || cpuLevel] + ' ▸', 'lvl', 'lvl ' + (r.level || cpuLevel)); btn('✕', 'rm', 'rm'); }
       col.appendChild(row);
     });
   }
@@ -4022,7 +4030,7 @@ function renderRoom() {
 }
 function teamStart() {
   if (mode !== 'host' || playing) return;
-  for (const r of roster) if (r.kind === 'open') Object.assign(r, { kind: 'cpu', id: 'c' + (++cpuSeq), name: `CPU · ${cpuLevel}`, look: randomLook() });
+  for (const r of roster) if (r.kind === 'open') Object.assign(r, { kind: 'cpu', id: 'c' + (++cpuSeq), name: `CPU · ${LEVEL_NAMES[cpuLevel]}`, level: cpuLevel, look: randomLook() });
   netSend({ t: 'start', fmt, roster: rosterPublic() });
   startTeamGame(rosterPublic());
 }
@@ -4043,7 +4051,7 @@ function startTeamGame(list) {
     p.pos.copy(teamSpawn(r.side, r.pos));
     p.facing = r.side === 'left' ? Math.PI / 2 : -Math.PI / 2;
     p.target = { x: p.pos.x, z: p.pos.z, y: 0, r: p.facing, s: 0 };
-    if (p.kind === 'cpu') p.ai = newAI();
+    if (p.kind === 'cpu') { p.ai = newAI(); p.level = r.level || cpuLevel; }
     animatePlayer(p, 0, 0);
     others.set(p.id, p);
   }
@@ -4134,8 +4142,8 @@ function teamLeave(c) {
   if (!playing) { if (r) Object.assign(r, { kind: 'open', id: null, name: '' }); sendRoster(); renderRoom(); return; }
   // mid-match: a CPU takes over their spot so the game goes on
   const p = others.get(L.id);
-  if (r) { r.kind = 'cpu'; r.name = `CPU · ${cpuLevel}`; }
-  if (p) { p.kind = 'cpu'; p.ai = newAI(); p.displayName = r ? r.name : 'CPU'; }
+  if (r) { r.kind = 'cpu'; r.level = cpuLevel; r.name = `CPU · ${LEVEL_NAMES[cpuLevel]}`; }
+  if (p) { p.kind = 'cpu'; p.level = cpuLevel; p.ai = newAI(); p.displayName = r ? r.name : 'CPU'; }
   showBanner('Player left', 'a CPU took their spot', 'var(--orange)');
 }
 // guest side of a team room
