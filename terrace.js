@@ -6,6 +6,7 @@
 // lamps, red paper-lantern festoons on the floodlight poles.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { makeFlyers, makeFireflies, makeEmbers, personGeometry } from './life.js';
 
 function rng(seed) { let s = seed >>> 0 || 1; return () => ((s = (s * 16807) % 2147483647) / 2147483647); }
 const smooth = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
@@ -113,9 +114,9 @@ export function buildTerrace(ctx) {
       ranges.push(mm);
       g.add(new THREE.Mesh(geo, mm));
     };
-    range(118, 105, 14, 34, 0x3e3a4e, 11);
-    range(158, 140, 26, 52, 0x5a4766, 23);
-    range(205, 185, 40, 74, 0x7a5a7c, 37);
+    range(118, 105, 6, 20, 0x3e3a4e, 11);       // kept low so there's plenty of sky (stars at night) over them
+    range(158, 140, 14, 32, 0x5a4766, 23);
+    range(205, 185, 24, 46, 0x7a5a7c, 37);
 
     // a nearer hill off each end with a golden chedi on top, catching the last light
     const V2 = (pts) => pts.map(([r, y]) => new THREE.Vector2(r, y));
@@ -462,6 +463,47 @@ export function buildTerrace(ctx) {
     }
   }
 
+  /* ---------------- DAY: farmers in the paddies, butterflies over the sunflowers ---------------- */
+  const dayLife = new THREE.Group(), nightLife = new THREE.Group();
+  g.add(dayLife); fx.add(nightLife);
+  const farmers = [];
+  {
+    const parts = personGeometry({ hat: true });
+    const shirt = [0x2f4f7a, 0x6a2f2f, 0x3f5f3a, 0x5a4a6a];
+    const skin = new THREE.MeshStandardMaterial({ color: 0x8a5a3a, roughness: 0.6 });
+    const hatM = new THREE.MeshStandardMaterial({ color: 0xd8b25a, roughness: 0.9, flatShading: true });
+    const fspots = [[20, 7, 1.2], [26, 14, -2.0], [-22, 9, 2.4], [-27, 17, 0.5], [15, 17.5, 3.0], [-14, 18, -1.0]];
+    fspots.forEach(([x, z, r], i) => {
+      const f = new THREE.Group();
+      const body = new THREE.Group();
+      body.add(new THREE.Mesh(parts.body, new THREE.MeshStandardMaterial({ color: shirt[i % shirt.length], roughness: 0.85, flatShading: true })));
+      body.add(new THREE.Mesh(parts.head, skin), new THREE.Mesh(parts.hat, hatM));
+      f.add(body);
+      f.position.set(x, heightAt(x, z), z); f.rotation.y = r;
+      dayLife.add(f);
+      farmers.push({ body, ph: R() * 6 });
+    });
+  }
+  const bfHomes = [];
+  for (let i = 0; i < 16; i++) {
+    const x = (R() * 2 - 1) * 30, z = (R() * 2 - 1) * 26;
+    if (rectDist(x, z) < 2) continue;
+    bfHomes.push([x, heightAt(x, z) + 0.8 + R() * 0.6, z]);
+  }
+  const butterflies = makeFlyers(bfHomes, 'butterfly');
+  dayLife.add(butterflies.g);
+  /* ---------------- NIGHT: fireflies over the terraces, embers from the village fires ---------------- */
+  {
+    const pts = [];
+    for (let i = 0; i < 160; i++) {
+      const x = (R() * 2 - 1) * 34, z = (R() * 2 - 1) * 30;
+      if (rectDist(x, z) < 1) continue;
+      pts.push([x, heightAt(x, z) + 0.5 + R() * 2.2, z]);
+    }
+    nightLife.add(makeFireflies(pts, uTime));
+    nightLife.add(makeEmbers(chimneys.map(([x, y, z]) => [x, y - 0.4, z]), uTime, 10));
+  }
+
   decor.build(g);
   solid.build(g, { castShadow: true, receiveShadow: true });
 
@@ -470,6 +512,10 @@ export function buildTerrace(ctx) {
   function update(dt) {
     time += dt;
     uTime.value = time;
+    if (dayLife.visible) {
+      butterflies.update(dt, time);
+      for (const f of farmers) f.body.rotation.x = 0.55 + Math.sin(time * 0.9 + f.ph) * 0.18;      // bent over, planting
+    }
     if (!fx.visible) return;
     for (const m of mist) { m.m.position.x = m.x + Math.sin(time * 0.03 + m.ph) * 6; m.m.position.z = m.z + Math.cos(time * 0.025 + m.ph) * 3; }
     for (const sm of smoke) {
@@ -492,8 +538,10 @@ export function buildTerrace(ctx) {
     }
   }
 
-  const RANGE_COLORS = { day: [0x5f7a6c, 0x8299a0, 0xa4b8c4], night: [0x161a2c, 0x20263e, 0x2a3150] };
+  const RANGE_COLORS = { day: [0x7f9c8a, 0xa6bcc4, 0xc6d6e2], night: [0x161a2c, 0x20263e, 0x2a3150] };   // hazier + bluer with distance by day
   function setTime(tod) {
+    dayLife.visible = tod === 'day';
+    nightLife.visible = tod !== 'day';
     ranges.forEach((m, i) => m.color.set(RANGE_COLORS[tod === 'day' ? 'day' : 'night'][i]));
     if (hillMatRef) hillMatRef.color.set(tod === 'day' ? 0x4f6a3e : 0x1c2a1c);
     for (const fl of flocks) fl.g.visible = tod === 'day';

@@ -10,6 +10,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { buildPond } from './pond.js';
 import { buildTerrace } from './terrace.js';
 import { MAPS, mapById } from './maps.js';
+import { buildTempleLife } from './temple-life.js';
 
 /* =====================================================================
    FIELD SPEC — ISTAF sepak takraw court (metres)
@@ -606,10 +607,10 @@ function setCourtSize(size) {
 // court size (3v3 gets the bigger version), cached, and swapped in whole — nothing from one map is visible on another.
 let venue = 'temple';                 // map id on screen
 const venues = {};                    // `${id}:${size}` → { g, fx, update, setTime? }
-const VENUE_BUILDERS = { pond: buildPond, terrace: buildTerrace };
+const VENUE_BUILDERS = { temple: buildTempleLife, pond: buildPond, terrace: buildTerrace };   // (the temple's buildings live in main.js; this adds its life)
 const venueKey = (id) => `${id}:${courtSize}`;
 function setVenue(id) {
-  if (id !== 'temple' && !VENUE_BUILDERS[id]) id = 'temple';
+  if (!VENUE_BUILDERS[id]) id = 'temple';
   venue = id;
   const k = venueKey(id);
   if (VENUE_BUILDERS[id] && !venues[k]) {

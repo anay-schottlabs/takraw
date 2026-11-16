@@ -7,6 +7,7 @@
 // red lacquer, gold trim, warm unlit "glow" lamps that bloom picks up.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { makeFlyers } from './life.js';
 
 const WATER_Y = -0.5;            // pond surface (the deck top is y = 0)
 const FLOOR_Y = -1.55;           // pond bed
@@ -780,6 +781,33 @@ export function buildPond(ctx) {
     }
   }
 
+  /* ---------------- DAY: dragonflies over the lotus, a heron on each island ---------------- */
+  const herons = [];
+  const dayLife = new THREE.Group();
+  g.add(dayLife);
+  const dfHomes = [];
+  for (let i = 0; i < 14; i++) { const pd = padSpots[Math.floor(R() * padSpots.length)]; if (pd) dfHomes.push([pd[0], WATER_Y + 0.6 + R() * 0.6, pd[1]]); }
+  const dragonflies = makeFlyers(dfHomes, 'dragonfly');
+  dayLife.add(dragonflies.g);
+  {
+    const white = new THREE.MeshStandardMaterial({ color: 0xf2f0ea, roughness: 0.7, flatShading: true });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x2a2620, roughness: 0.8 });
+    const yel = new THREE.MeshStandardMaterial({ color: 0xe8b23a, roughness: 0.6 });
+    for (const [ix, iz] of ISLANDS) {
+      const h = new THREE.Group();
+      const b = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), white); b.scale.set(0.8, 0.8, 1.5); b.position.y = 0.95; h.add(b);
+      const n = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.55, 5), white); n.position.set(0, 1.25, 0.22); n.rotation.x = 0.35; h.add(n);
+      const hd = new THREE.Mesh(new THREE.SphereGeometry(0.07, 7, 5), white); hd.position.set(0, 1.5, 0.32); h.add(hd);
+      const bk = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.2, 4), yel); bk.rotation.x = Math.PI / 2; bk.position.set(0, 1.5, 0.45); h.add(bk);
+      for (const s of [-1, 1]) { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.8, 4), dark); l.position.set(s * 0.06, 0.4, 0); h.add(l); }
+      const dx = ix > 0 ? -2.4 : 2.4;
+      h.position.set(ix + dx, WATER_Y, iz + (iz > 0 ? -1.6 : 1.6));     // wading at the island's edge
+      h.rotation.y = Math.atan2(-(ix + dx), -iz);
+      dayLife.add(h);
+      herons.push({ h, hd, ph: R() * 6 });
+    }
+  }
+
   decor.build(g);
   solid.build(g, { castShadow: true, receiveShadow: true });
 
@@ -806,6 +834,10 @@ export function buildPond(ctx) {
     }
     koiBody.instanceMatrix.needsUpdate = true;
     koiSpots.instanceMatrix.needsUpdate = true;
+    if (dayLife.visible) {
+      dragonflies.update(dt, time);
+      for (const hr of herons) hr.h.rotation.y += Math.sin(time * 0.4 + hr.ph) * 0.002;
+    }
     if (!fx.visible) return;
     // candle boats drift on slow loops; flames flicker
     for (const cd of candles) {
@@ -844,6 +876,7 @@ export function buildPond(ctx) {
     for (const cd of candles) cd.g.visible = night;
     fireflies.visible = night;
     for (const m of mist) m.m.visible = night;
+    dayLife.visible = !night;
   }
   return { g, fx, update, setTime };
 }
