@@ -4,7 +4,7 @@
 // glowing grills and crowds.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { rnd, shophouseRow, festoons, floodPoles, boundaryRail, neonSign, paint, vcMat } from './props.js';
+import { rnd, shophouseRow, festoons, floodPoles, boundaryRail, neonSign, paint, vcMat, roofClutter, powerLines } from './props.js';
 import { makeEmbers, personGeometry } from './life.js';
 
 export function buildMarket(ctx) {
@@ -39,6 +39,9 @@ export function buildMarket(ctx) {
   const backB = shophouseRow({ x0: -LEN, x1: LEN, z: SIDE + 14, face: -1, seed: 103, minF: 5, maxF: 8, depth: 6 });
   g.add(backA.group, backB.group);
   shopMats.push(...backA.mats, ...backB.mats);
+  g.add(roofClutter([...rowA.boxes, ...rowB.boxes, ...backA.boxes, ...backB.boxes], 77));
+  // the classic Bangkok tangle of cables on poles along both kerbs
+  for (const s of [-1, 1]) g.add(powerLines(-LEN + 4, LEN - 4, s * (SIDE - 2.4), { step: 12, h: 8.6, seed: s > 0 ? 5 : 9 }));
 
   /* ---------------- neon signs on the facades ---------------- */
   const neon = [];

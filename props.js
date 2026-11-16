@@ -89,7 +89,7 @@ export function shophouseRow({ x0, x1, z, y = 0, face = 1, depth = 7, seed = 1, 
     const [map, glow] = facadeTextures(seed * 31 + i, floors, bays);
     variants.push({ floors, bays, mat: new THREE.MeshStandardMaterial({ map, emissiveMap: glow, emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.85 }), geos: [] });
   }
-  const bodies = [], awnings = [];
+  const bodies = [], awnings = [], boxes = [];
   const awnCols = [0xc0392b, 0x1f5fa8, 0x2f7a4a, 0xe2a400, 0x8a2a6a];
   let x = x0;
   while (x < x1) {
@@ -98,6 +98,7 @@ export function shophouseRow({ x0, x1, z, y = 0, face = 1, depth = 7, seed = 1, 
     const cx = x + wdt / 2, cz = z - face * depth / 2;
     const body = new THREE.BoxGeometry(wdt, hgt, depth); body.translate(cx, y + hgt / 2, cz);
     bodies.push(paint(body, [0xb8a690, 0xc4b49c, 0xa89880][Math.floor(R() * 3)]));
+    boxes.push([cx, y + hgt, cz, wdt, depth]);
     const front = new THREE.PlaneGeometry(wdt, hgt);
     if (face < 0) front.rotateY(Math.PI);
     front.translate(cx, y + hgt / 2, z + face * 0.01);
@@ -110,7 +111,7 @@ export function shophouseRow({ x0, x1, z, y = 0, face = 1, depth = 7, seed = 1, 
   for (const v of variants) if (v.geos.length) { g.add(new THREE.Mesh(mergeGeometries(v.geos), v.mat)); mats.push(v.mat); }
   g.add(new THREE.Mesh(mergeGeometries(bodies), vcMat({ roughness: 0.9 })));
   g.add(new THREE.Mesh(mergeGeometries(awnings), vcMat()));
-  return { group: g, mats };
+  return { group: g, mats, boxes };
 }
 
 /** Neon sign: a glowing canvas word on a dark backing. Returns { mesh, mat } */
@@ -316,5 +317,41 @@ export function treeClumps(spots, { leaf = 0x2f4a2a, bark = 0x5a4a3c, scaleY = 1
   });
   im.computeBoundingSphere(); it.computeBoundingSphere();
   g.add(im, it);
+  return g;
+}
+
+/** Rooftop clutter for a list of building boxes [cx, topY, cz, w, d]: water tanks, antennas, satellite dishes, AC units. One mesh. */
+export function roofClutter(boxes, seed = 3) {
+  const R = rnd(seed), parts = [];
+  const P = (geo, col, x, y, z) => { geo.translate(x, y, z); parts.push(paint(geo, col)); };
+  for (const [x, h, z, w, d] of boxes) {
+    if (R() < 0.7) { const tx = x + (R() - 0.5) * w * 0.6, tz = z + (R() - 0.5) * d * 0.5; P(new THREE.CylinderGeometry(0.7, 0.7, 1.4, 10), [0x3a6aa8, 0xd8d8d0, 0x2f8a5a][Math.floor(R() * 3)], tx, h + 1.5, tz); for (const [dx, dz] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) P(new THREE.BoxGeometry(0.08, 0.8, 0.08), 0x555555, tx + dx, h + 0.4, tz + dz); }
+    if (R() < 0.6) { const ax = x + (R() - 0.5) * w * 0.7; P(new THREE.CylinderGeometry(0.03, 0.04, 2.6 + R() * 2, 4), 0x8a8a8a, ax, h + 1.5, z); P(new THREE.BoxGeometry(1.2, 0.04, 0.04), 0x8a8a8a, ax, h + 2.4, z); }
+    if (R() < 0.5) { const dish = new THREE.SphereGeometry(0.45, 8, 4, 0, Math.PI * 2, 0, Math.PI / 3); dish.rotateX(-1.0); P(dish, 0xe8e8e2, x + (R() - 0.5) * w * 0.6, h + 0.5, z + (R() - 0.5) * d * 0.4); }
+    for (let k = 0; k < 2; k++) if (R() < 0.5) P(new THREE.BoxGeometry(0.9, 0.6, 0.6), 0xd6d6d0, x + (R() - 0.5) * w * 0.7, h + 0.3, z + (R() - 0.5) * d * 0.6);
+  }
+  return parts.length ? new THREE.Mesh(mergeGeometries(parts), vcMat({ flatShading: true })) : new THREE.Group();
+}
+
+/** Thai street power poles along a line (z), with a sagging tangle of cables and a few transformers. */
+export function powerLines(x0, x1, z, { step = 12, h = 8.5, seed = 4 } = {}) {
+  const R = rnd(seed), g = new THREE.Group(), parts = [];
+  const P = (geo, col, x, y, zz) => { geo.translate(x, y, zz); parts.push(paint(geo, col)); };
+  const xs = []; for (let x = x0; x <= x1; x += step) xs.push(x);
+  for (const x of xs) {
+    P(new THREE.CylinderGeometry(0.14, 0.2, h, 6), 0xa8a49c, x, h / 2, z);
+    P(new THREE.BoxGeometry(0.1, 0.12, 1.6), 0x6a6a6a, x, h - 0.6, z); P(new THREE.BoxGeometry(0.1, 0.12, 1.2), 0x6a6a6a, x, h - 1.5, z);
+    if (R() < 0.35) P(new THREE.CylinderGeometry(0.35, 0.35, 0.9, 8), 0x7a8288, x, h - 2.6, z + 0.35);   // transformer
+  }
+  const wires = [];
+  for (let i = 0; i < xs.length - 1; i++) for (let k = 0; k < 9; k++) {
+    const y0 = h - 0.6 - (k % 3) * 0.45 - Math.floor(k / 3) * 0.3, dz = ((k % 4) - 1.5) * 0.35, sag = 0.5 + R() * 1.4;
+    const a = new THREE.Vector3(xs[i], y0, z + dz), b = new THREE.Vector3(xs[i + 1], y0 - (R() - 0.5) * 0.3, z + dz + (R() - 0.5) * 0.4);
+    let prev = a;
+    for (let s = 1; s <= 8; s++) { const t = s / 8, p = a.clone().lerp(b, t); p.y -= Math.sin(Math.PI * t) * sag; wires.push(prev.x, prev.y, prev.z, p.x, p.y, p.z); prev = p; }
+  }
+  const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wires, 3));
+  g.add(new THREE.LineSegments(wg, new THREE.LineBasicMaterial({ color: 0x1a1a1e })));
+  g.add(new THREE.Mesh(mergeGeometries(parts), vcMat({ flatShading: true })));
   return g;
 }
