@@ -8,6 +8,7 @@ import { rnd, makeWater, festoons, floodPoles, boundaryRail, paint, vcMat, palms
 import { makeEmbers, personGeometry } from './life.js';
 
 const SEA_Y = -0.62;
+// the sand shelves from y −0.12 at SHORE−2 at 0.09 per metre, so it meets the sea here:
 
 export function buildBeach(ctx) {
   const { F, xf, makeBatch, texLoader, glowTexture, slope } = ctx;
@@ -27,7 +28,8 @@ export function buildBeach(ctx) {
     vc: vcMat(),
     vcFlat: vcMat({ flatShading: true }),
   };
-  const SHORE = F.outZ + 9;                 // waterline (sea toward +z)
+  const SHORE = F.outZ + 9;                 // where the sand starts to shelve (sea toward +z)
+  const WATERLINE = SHORE - 2 + (-0.12 - SEA_Y) / 0.09;
 
   /* ---------------- sand (gently shelving into the sea), sea, foam ---------------- */
   {
@@ -64,10 +66,17 @@ export function buildBeach(ctx) {
   })();
   const foams = [];
   for (let i = 0; i < 2; i++) {
-    const f = new THREE.Mesh(new THREE.PlaneGeometry(600, 2.4), foamMat.clone());
+    const f = new THREE.Mesh(new THREE.PlaneGeometry(600, 3.6), foamMat.clone());
     f.rotation.x = -Math.PI / 2; f.renderOrder = 3;
     g.add(f);
     foams.push({ f, ph: i * Math.PI });
+  }
+
+  const crests = [];
+  for (let i = 0; i < 9; i++) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(60 + Math.random() * 60, 0.9), foamMat.clone());
+    m.rotation.x = -Math.PI / 2; m.renderOrder = 3; g.add(m);
+    crests.push({ m, x: -150 + i * 38 + Math.random() * 10, t: i / 9 });
   }
 
   /* ---------------- karst towers out in the sea + headlands off both ends ---------------- */
@@ -172,11 +181,62 @@ export function buildBeach(ctx) {
     }
   }
 
+  /* ---------------- beachgoers: towels + sunbathers, people standing about, swimmers ---------------- */
+  {
+    const pg = personGeometry();
+    const parts = [];
+    const towel = [0xff4a8a, 0x3fa0ff, 0xffd23f, 0x2fd3a0, 0xff8a3a, 0xffffff];
+    const swim = [0xd83a2a, 0x1f6fd8, 0x2a2a2a, 0xff8ac0, 0x2fa04a];
+    const skin = [0x8a5a3a, 0xc99a72, 0x6b4a30, 0xe2b089];
+    for (let i = 0; i < 30; i++) {
+      const x = (R() - 0.5) * 120, z = SHORE - 3 - R() * 7;
+      if (Math.abs(x) < F.outX + 3) continue;
+      const tw = new THREE.BoxGeometry(0.9, 0.03, 1.9); tw.rotateY(R() * 0.6 - 0.3); tw.translate(x, -0.1, z); parts.push(paint(tw, towel[i % towel.length]));
+      if (R() < 0.75) {                                         // someone lying on it
+        const ry = R() * 0.6 - 0.3;
+        for (const [geo, col] of [[pg.body, swim[i % swim.length]], [pg.head, skin[i % skin.length]]]) { const gg = geo.clone(); gg.rotateX(-Math.PI / 2); gg.rotateY(ry); gg.translate(x, -0.02, z + 0.75); parts.push(paint(gg, col)); }
+      }
+    }
+    for (let i = 0; i < 26; i++) {                              // standing / strolling along the water
+      const x = (R() - 0.5) * 140, z = SHORE - 1.5 + R() * 2.5;
+      if (Math.abs(x) < F.outX + 4) continue;
+      const ry = R() * 6, sc = 0.85 + R() * 0.25;
+      for (const [geo, col] of [[pg.body, swim[i % swim.length]], [pg.head, skin[i % skin.length]]]) { const gg = geo.clone(); gg.scale(sc, sc, sc); gg.rotateY(ry); gg.translate(x, z > SHORE ? -0.55 : -0.12, z); parts.push(paint(gg, col)); }
+    }
+    for (let i = 0; i < 12; i++) {                              // swimmers: heads + shoulders out of the water
+      const x = (R() - 0.5) * 110, z = SHORE + 4 + R() * 10;
+      const h = new THREE.SphereGeometry(0.13, 8, 6); h.translate(x, SEA_Y + 0.18, z); parts.push(paint(h, skin[i % skin.length]));
+      const s = new THREE.SphereGeometry(0.22, 8, 5); s.scale(1.3, 0.4, 0.8); s.translate(x, SEA_Y + 0.02, z); parts.push(paint(s, swim[i % swim.length]));
+    }
+    g.add(new THREE.Mesh(mergeGeometries(parts), MAT.vcFlat));
+  }
+  /* ---------------- a wooden jetty out into the bay + rocks at the headlands ---------------- */
+  {
+    const jx = 44, z0 = SHORE - 3, z1 = SHORE + 22;
+    put(MAT.wood, new THREE.BoxGeometry(2.4, 0.16, z1 - z0), jx, 0.18, (z0 + z1) / 2);
+    for (let z = z0 + 1; z <= z1; z += 3) for (const s of [-1, 1]) put(MAT.wood, new THREE.CylinderGeometry(0.1, 0.12, 2.4, 6), jx + s * 1.1, -0.9, z);
+    for (let z = z0 + 1; z <= z1; z += 3) for (const s of [-1, 1]) put(MAT.rope, new THREE.CylinderGeometry(0.04, 0.04, 1.0, 5), jx + s * 1.15, 0.7, z);
+    for (const s of [-1, 1]) put(MAT.rope, new THREE.BoxGeometry(0.05, 0.05, z1 - z0), jx + s * 1.15, 1.18, (z0 + z1) / 2);
+    put(MAT.glow, new THREE.SphereGeometry(0.18, 8, 6), jx - 1.15, 1.35, z1 - 0.5);
+    for (let i = 0; i < 40; i++) {
+      const sx = i % 2 ? 1 : -1, x = sx * (72 + R() * 26), z = SHORE - 14 + R() * 26;
+      put(MAT.vcFlat, paint(new THREE.IcosahedronGeometry(0.6 + R() * 1.6, 0), R() < 0.5 ? 0x8a8478 : 0x6a6458), x, -0.2, z, R() * 6, R(), R());
+    }
+  }
+
   /* ---------------- rope fence on the ball boundary, floodlights, bar lights ---------------- */
   boundaryRail(F, putS, { postMat: MAT.wood, railMat: MAT.rope, step: 1.8, postW: 0.11 });
   const poles = floodPoles(ctx, g, { x: F.outX + 1.4, z: F.outZ + 1.6, base: -0.12, poleMat: MAT.wood, headMat: MAT.thatch, glowMat: MAT.glow, put: putS });
-  g.add(festoons([[new THREE.Vector3(-60, 3.4, -(F.outZ + 9.5)), new THREE.Vector3(-F.outX - 3, 3.4, -(F.outZ + 9.5))], [new THREE.Vector3(F.outX + 3, 3.4, -(F.outZ + 9.5)), new THREE.Vector3(60, 3.4, -(F.outZ + 9.5))]],
-    { sag: 0.6, n: 40, colors: [0xffd27a, 0xff8a5a, 0x7fd8ff], size: 0.12 }));
+  {
+    // bar lights strung between bamboo poles along the beach behind the court
+    const pairs = [], zz = -(F.outZ + 8.6);
+    for (const sx of [-1, 1]) {
+      const xs = []; for (let x = F.outX + 3; x <= 62; x += 9.5) xs.push(sx * x);
+      for (const x of xs) { put(MAT.wood, new THREE.CylinderGeometry(0.06, 0.08, 3.8, 6), x, 1.78, zz); put(MAT.glow, new THREE.SphereGeometry(0.1, 6, 5), x, 3.72, zz); }
+      for (let i = 0; i < xs.length - 1; i++) pairs.push([new THREE.Vector3(xs[i], 3.5, zz), new THREE.Vector3(xs[i + 1], 3.5, zz)]);
+    }
+    g.add(festoons(pairs, { sag: 0.55, n: 12, colors: [0xffd27a, 0xff8a5a, 0x7fd8ff], size: 0.12 }));
+  }
 
   /* ---------------- night: tiki torches along the shore, fire dancers ---------------- */
   const night = new THREE.Group(); fx.add(night);
@@ -213,8 +273,13 @@ export function buildBeach(ctx) {
     uTime.value = time;
     for (const fo of foams) {
       const k = Math.sin(time * 0.55 + fo.ph);
-      fo.f.position.set(0, SEA_Y + 0.08 - Math.max(0, k) * 0.02, SHORE + 0.6 - k * 1.6);
-      fo.f.material.opacity = 0.55 + 0.35 * Math.max(0, -k);
+      fo.f.position.set(0, SEA_Y + 0.05, WATERLINE + 0.4 - k * 1.6);   // washes up the sand and back
+      fo.f.material.opacity = 0.75 + 0.25 * Math.max(0, -k);
+    }
+    for (const cr of crests) {                                 // wave crests rolling in to the beach
+      cr.t += dt / 7; if (cr.t > 1) cr.t -= 1;
+      cr.m.position.set(cr.x, SEA_Y + 0.05, WATERLINE + 2 + (1 - cr.t) * 16);
+      cr.m.material.opacity = 0.55 * Math.sin(Math.PI * cr.t);
     }
     for (const b of boats) {
       if (b.v) { b.x += b.v * dt; if (Math.abs(b.x) > 170) b.x = -Math.sign(b.x) * 170; b.ry = b.v > 0 ? 0 : Math.PI; }
