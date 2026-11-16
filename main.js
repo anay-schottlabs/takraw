@@ -683,7 +683,16 @@ let mapPick = { map: 'temple', time: 'night' };
 try { const m = JSON.parse(localStorage.getItem('takraw-mappick') || 'null'); if (m) mapPick = { map: mapById(m.map).id, time: m.time === 'day' ? 'day' : 'night' }; } catch {}
 let gameMap = null;
 const cleanChoice = (m, t) => ({ map: mapById(m).id, time: t === 'day' ? 'day' : 'night' });
-function applyArena(choice) { setVenue(choice.map); setTimeOfDay(choice.time); }
+function applyArena(choice) { setVenue(choice.map); setTimeOfDay(choice.time); applyUiColours(); }
+// the menus take the colours of the scene behind them (see maps.js `ui`); night washes are a touch deeper
+function applyUiColours() {
+  const u = mapById(venue).ui; if (!u) return;
+  const tint = timeOfDay === 'day' ? u.tint : '#' + new THREE.Color(u.tint).multiplyScalar(0.7).getHexString();
+  for (const id of ['menu', 'howto']) {
+    const el = document.getElementById(id); if (!el) continue;
+    el.style.setProperty('--acc', u.a); el.style.setProperty('--acc2', u.b); el.style.setProperty('--tint', tint);
+  }
+}
 
 /* =====================================================================
    Surroundings — temple courtyard at dusk
