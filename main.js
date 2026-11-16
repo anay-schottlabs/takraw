@@ -8,6 +8,7 @@ import * as P from './physics.js';
 import { sfx } from './sfx.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { buildPond } from './pond.js';
+import { buildTerrace } from './terrace.js';
 
 /* =====================================================================
    FIELD SPEC — ISTAF sepak takraw court (metres)
@@ -117,7 +118,7 @@ function applyQuality(level) {
     if (key.shadow.map) { key.shadow.map.dispose(); key.shadow.map = null; }
   }
   for (const sp of spotLights) sp.visible = q.spots;
-  if (pond) pond.fx.visible = level !== 'low';   // fireflies, mist, candle boats, ripples
+  for (const vn of Object.values(venues)) vn.fx.visible = level !== 'low';   // fireflies, mist, candles, smoke, birds…
   if (prevShadow !== renderer.shadowMap.enabled) {
     scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
   }
@@ -544,21 +545,23 @@ function setCourtSize(size) {
   buildSideGlow();
   landingDirty = true;
 }
-// VENUES: 1v1 / 2v2 play in the temple courtyard; 3v3 plays on the Lotus Pond (built the first time it's needed,
-// and swapped in whole — none of it is ever visible in the other modes).
-let venue = 'temple', pond = null;
+// VENUES: 1v1 plays in the temple courtyard, 2v2 on the Hill Tribe Terrace, 3v3 on the Lotus Pond. Each venue is built the
+// first time it's needed and swapped in whole — none of one is ever visible in another mode.
+let venue = 'temple';
+const venues = {};             // name → { g, fx, update }
+const VENUE_BUILDERS = { pond: buildPond, terrace: buildTerrace };
 function setVenue(v) {
   if (v === venue) return;
   venue = v;
-  if (v === 'pond' && !pond) {
-    pond = buildPond({ F, xf, makeBatch, slope, poly, texLoader, glowTexture, ornamentTexture, panelTexture, spotLights,
+  if (VENUE_BUILDERS[v] && !venues[v]) {
+    venues[v] = VENUE_BUILDERS[v]({ F, xf, makeBatch, slope, poly, texLoader, glowTexture, ornamentTexture, panelTexture, spotLights,
       quality: () => QUALITY[qualityLevel] || QUALITY.medium });
-    pond.fx.visible = qualityLevel !== 'low';
-    scene.add(pond.g);
+    venues[v].fx.visible = qualityLevel !== 'low';
+    scene.add(venues[v].g);
   }
   templeGroup.visible = v === 'temple';
   boardsGroup.visible = v === 'temple';
-  if (pond) pond.g.visible = v === 'pond';
+  for (const [name, vn] of Object.entries(venues)) vn.g.visible = name === v;
 }
 
 
@@ -3766,7 +3769,7 @@ function playCPU(train = false) {
   roomCode = '';
   startGame('left');
   spawnRemote('right', `CPU · ${cpuLevel.toUpperCase()}`);
-  them.displayName = training ? 'Training bot' : `CPU (${cpuLevel})`;
+  them.displayName = training ? 'Training bot' : `CPU (${LEVEL_NAMES[cpuLevel] || cpuLevel})`;
   if (training) setDrill(trainDrill);
   cpuStartMatch();
   resetMatch();
@@ -3890,7 +3893,7 @@ function startGame(side) {
   animatePlayer(me, 0, 0);
   updateCamera(0, true);
   showScreen('game');
-  ui.ping.textContent = mode === 'solo' ? 'PRACTICE' : mode === 'cpu' ? `VS CPU · ${cpuLevel.toUpperCase()}` : `${roomCode} · — ms`;
+  ui.ping.textContent = mode === 'solo' ? 'PRACTICE' : mode === 'cpu' ? `VS CPU · ${(LEVEL_NAMES[cpuLevel] || cpuLevel).toUpperCase()}` : `${roomCode} · — ms`;
   setBoardNames();
   renderMatchUI();
 }
@@ -4076,6 +4079,7 @@ function renderRoom() {
   $('room-cols').classList.toggle('hidden', !team);
   $('room-start').classList.toggle('hidden', !(host && team));
   if (!team) $('room-fill').classList.add('hidden');
+  $('room-cpu').classList.toggle('hidden', !(host && fmt === '1v1' && !(conn && conn.open)));
   if (!team) { ui.waitStatus.textContent = host ? (peer && peer.open ? 'Waiting for opponent to join…' : ui.waitStatus.textContent) : ui.waitStatus.textContent; return; }
   for (const side of ['left', 'right']) {
     const col = $(`room-${side}`);
@@ -4124,7 +4128,7 @@ function startTeamGame(list) {
     else if (mates.length === 2 && fmt === '3v3') { const bk = mates.find((r) => r.pos === 'back') || mates[0]; bk.pos = 'back'; for (const r of mates) if (r !== bk) r.pos = 'front'; }
   }
   setCourtSize(fmt === '3v3' ? 'big' : 'normal');
-  setVenue(fmt === '3v3' ? 'pond' : 'temple');
+  setVenue(fmt === '3v3' ? 'pond' : fmt === '2v2' ? 'terrace' : 'temple');
   const mine = list.find((r) => r.id === myId);
   if (!mine) return;
   startGame(mine.side);
@@ -4519,15 +4523,15 @@ ui.name.addEventListener('input', () => { try { localStorage.setItem('takraw-nam
 $('create-btn').onclick = () => hostGame();
 $('join-btn').onclick = joinGame;
 $('practice-btn').onclick = practice;
-$('cpu-btn').onclick = playCPU;
 $('train-btn').onclick = playTraining;
 setDrill(trainDrill);
-for (const b of document.querySelectorAll('.cpu-lvl')) {
-  b.classList.toggle('on', b.dataset.lvl === cpuLevel);
+// 1v1 room: instead of waiting for a friend, play a CPU right away (this replaces the old Play vs CPU menu row)
+for (const b of document.querySelectorAll('.room-cpu-lvl')) {
   b.onclick = () => {
     cpuLevel = b.dataset.lvl;
     try { localStorage.setItem('takraw-cpu', cpuLevel); } catch {}
-    document.querySelectorAll('.cpu-lvl').forEach((x) => x.classList.toggle('on', x === b));
+    teardown();
+    playCPU();
   };
 }
 $('cancel-btn').onclick = () => { teardown(); showScreen('home'); };
@@ -4573,7 +4577,7 @@ startLobbyBrowser();
 document.getElementById('lobby-refresh').onclick = () => { const el = document.getElementById('lobby-list'); if (el && !probing) el.innerHTML = '<p class="lobby-empty">Looking for games…</p>'; refreshLobbies(); };
 
 // debug hook for automated testing
-window.__takraw = { get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, pond: () => pond, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
+window.__takraw = { get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, pond: () => venues.pond, venues: () => venues, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
   // test helpers: an incoming smash from the other side, and the block effects
   debugSmash: (tx, tz, v = 16) => { const sOpp = -sideSign(me.side); setBall(P.solveSpeed({ x: sOpp * 1.2, y: 2.9, z: 0 }, { x: tx, z: tz }, v)); ballLive = true;
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
@@ -4595,7 +4599,7 @@ function frame() {
   const t0 = performance.now();
   autoQuality(dt);
   if (playing) { updateLocal(dt); updateRemote(dt); updateCPU(dt); updateBall(dt); }
-  if (pond && venue === 'pond') pond.update(dt, renderer.getPixelRatio());
+  if (venues[venue]) venues[venue].update(dt, renderer.getPixelRatio());
   else if (pv.p) updatePreview(dt);
   if (window.__takrawBot) window.__takrawBot(dt);   // test hook (unused in normal play)
   updateCamera(dt);

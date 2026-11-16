@@ -109,10 +109,6 @@
           <button id="create-btn" class="btn primary">Create game</button>
           <button id="practice-btn" class="btn dark">Practice</button>
         </div>
-        <div class="cpu-row">
-          <button id="cpu-btn" class="btn outline">Play vs CPU</button>
-          <div class="cpu-lvls"><button class="cpu-lvl" data-lvl="easy">Easy</button><button class="cpu-lvl" data-lvl="normal">Normal</button><button class="cpu-lvl" data-lvl="hard">Hard</button></div>
-        </div>
         <button id="train-btn" class="btn dark train-btn">Training <small>· unbeatable bot, you pick its moves (1–6)</small></button>
 
         <label class="lbl" for="code-input">Party code</label>
@@ -147,6 +143,7 @@
         <p class="wait-status" id="wait-status">Connecting…</p>
         <div id="room" class="hidden">
           <div class="room-fmt" id="room-fmt"><button data-fmt="1v1" class="on">1v1</button><button data-fmt="2v2">2v2</button><button data-fmt="3v3">3v3</button></div>
+          <div class="room-cpu hidden" id="room-cpu"><span>…or play a CPU now:</span><div class="room-cpu-lvls"><button class="room-cpu-lvl easy" data-lvl="easy">Easy</button><button class="room-cpu-lvl normal" data-lvl="normal">Normal</button><button class="room-cpu-lvl hard" data-lvl="hard">Hard</button><button class="room-cpu-lvl train" data-lvl="train">Unbeatable</button></div></div>
           <div class="room-cols hidden" id="room-cols"><div class="room-col" id="room-left"></div><div class="room-col" id="room-right"></div></div>
           <button id="room-fill" class="btn outline hidden">Fill with CPU</button>
           <button id="room-start" class="btn primary hidden">Start</button>

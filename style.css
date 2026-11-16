@@ -338,3 +338,9 @@ button { font-family: inherit; }
 #menu.customizing .cube { display: none; }
 .rs-btn.lvl { color: var(--text); min-width: 84px; text-align: left; }
 .rs-btn.lvl.easy { color: #5fd38a; } .rs-btn.lvl.normal { color: var(--blue); } .rs-btn.lvl.hard { color: var(--orange); } .rs-btn.lvl.train { color: #ff5a5a; }
+.room-cpu { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.room-cpu span { color: var(--muted); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; font-weight: 700; }
+.room-cpu-lvls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; width: 100%; }
+.room-cpu-lvl { background: #0f0f12; border: 1px solid var(--line); padding: 8px 4px; font-family: var(--display); font-weight: 800; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; font-size: 13px; }
+.room-cpu-lvl.easy { color: #5fd38a; } .room-cpu-lvl.normal { color: var(--blue); } .room-cpu-lvl.hard { color: var(--orange); } .room-cpu-lvl.train { color: #ff5a5a; }
+.room-cpu-lvl:hover { border-color: currentColor; }
