@@ -3931,6 +3931,7 @@ function updateCamera() {
     camPos.set(-14, 6.5, 11);
     camLook.set(0, 0.6, 0);
   }
+  if (window.__takrawCam) { camPos.fromArray(window.__takrawCam.pos); camLook.fromArray(window.__takrawCam.look); }   // debug free camera (testing only)
   camera.position.copy(camPos);
   camera.lookAt(camLook);
   if (trauma > 0) {

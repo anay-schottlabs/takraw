@@ -52,10 +52,10 @@ export function buildPalace(ctx) {
   for (const s of [-1, 1]) {
     const zc = s * (POOL_Z0 + POOL_Z1) / 2, len = (F.outX + 14) * 2, wid = POOL_Z1 - POOL_Z0;
     const w = makeWater(texLoader, uTime, { w: len, d: wid, color: 0x1f4a6a, opacity: 1, repeat: [len / 6, wid / 6] });
-    w.position.set(0, -0.32, zc); g.add(w);
-    for (const [l, d, x, z] of [[len + 0.8, 0.4, 0, s * POOL_Z0], [len + 0.8, 0.4, 0, s * POOL_Z1], [0.4, wid, -len / 2, zc], [0.4, wid, len / 2, zc]]) put(MAT.marble, new THREE.BoxGeometry(l, 0.36, d), x, -0.02, z);
+    w.position.set(0, -0.04, zc); g.add(w);                                    // above the marble terrace plane (y −0.1)
+    for (const [l, d, x, z] of [[len + 0.8, 0.4, 0, s * POOL_Z0], [len + 0.8, 0.4, 0, s * POOL_Z1], [0.4, wid, -len / 2, zc], [0.4, wid, len / 2, zc]]) put(MAT.marble, new THREE.BoxGeometry(l, 0.36, d), x, 0.08, z);
     for (let x = -len / 2 + 5; x < len / 2 - 4; x += 7) {
-      put(MAT.gold, new THREE.CylinderGeometry(0.3, 0.45, 0.4, 10), x, -0.15, zc);
+      put(MAT.gold, new THREE.CylinderGeometry(0.3, 0.45, 0.4, 10), x, 0.05, zc);
       jets.push([x, zc]);
     }
   }
@@ -67,8 +67,19 @@ export function buildPalace(ctx) {
     var jetMesh = im;
     const lights = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.8, 1.8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0x9fd8ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }), jets.length);
     const o = new THREE.Object3D();
-    jets.forEach(([x, z], i) => { o.position.set(x, -0.3, z); o.updateMatrix(); lights.setMatrixAt(i, o.matrix); });
+    jets.forEach(([x, z], i) => { o.position.set(x, -0.02, z); o.updateMatrix(); lights.setMatrixAt(i, o.matrix); });
     lights.computeBoundingSphere(); lights.renderOrder = 3; fx.add(lights);
+  }
+
+  // lily pads drifting in the pools
+  {
+    const pad = new THREE.CircleGeometry(0.45, 12, 0.3, Math.PI * 2 - 0.6); pad.rotateX(-Math.PI / 2);
+    for (const s of [-1, 1]) for (let i = 0; i < 26; i++) {
+      const x = (R() - 0.5) * (F.outX + 12) * 2, z = s * (POOL_Z0 + 0.6 + R() * (POOL_Z1 - POOL_Z0 - 1.2));
+      if (jets.some(([jx, jz]) => Math.hypot(x - jx, z - jz) < 1.2)) continue;
+      put(MAT.vc, paint(pad.clone(), R() < 0.8 ? 0x3f7a32 : 0x5a8a3a), x, -0.02, z, R() * 6);
+      if (R() < 0.25) put(MAT.vc, paint(new THREE.ConeGeometry(0.16, 0.24, 6), 0xff8fb8), x + 0.1, 0.1, z, 0, Math.PI);
+    }
   }
 
   /* ---------------- topiary + parterres + lamp posts ---------------- */
@@ -174,7 +185,7 @@ export function buildPalace(ctx) {
   function update(dt) {
     time += dt;
     uTime.value = time;
-    jets.forEach(([x, z], i) => { o.position.set(x, -0.3, z); o.scale.set(1, 0.85 + 0.2 * Math.sin(time * 3 + i), 1); o.updateMatrix(); jetMesh.setMatrixAt(i, o.matrix); });
+    jets.forEach(([x, z], i) => { o.position.set(x, 0.2, z); o.scale.set(1, 0.85 + 0.2 * Math.sin(time * 3 + i), 1); o.updateMatrix(); jetMesh.setMatrixAt(i, o.matrix); });
     jetMesh.instanceMatrix.needsUpdate = true;
   }
   function setTime(tod) { gilt.emissiveIntensity = tod === 'day' ? 0.15 : 0.75; }
