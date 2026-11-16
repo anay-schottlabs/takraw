@@ -104,8 +104,6 @@
         <label class="lbl" for="name-input">Your name</label>
         <input id="name-input" class="inp" maxlength="14" placeholder="PLAYER" autocomplete="off" />
         <button id="custom-btn" class="btn dark">Customize player</button>
-        <label class="lbl">Map</label>
-        <div class="map-pick" id="home-maps"></div>
 
         <div class="btn-grid">
           <button id="create-btn" class="btn primary">Create game</button>
@@ -137,6 +135,14 @@
         <div class="cust-row text moves" id="pv-moves"></div>
         <p class="cust-note">Your headband and the ring at your feet show your team: blue = you, red = them.</p>
         <div class="cust-actions"><button id="cust-random" class="btn outline">Random</button><button id="cust-done" class="btn primary">Done</button></div>
+      </div>
+
+      <div id="screen-maps" class="screen hidden">
+        <div class="mp-head"><button id="maps-back" class="sq-btn" title="Back">&#8592;</button><div><p class="lbl" id="maps-kicker">Practice</p><h2 class="mp-title">Choose a map</h2></div></div>
+        <div class="mp-list" id="map-list"></div>
+        <div class="mp-row" id="map-tod"></div>
+        <p class="mp-hint">↑ ↓ browse · Enter to play — the view behind is exactly what you'll see in the game</p>
+        <button id="maps-go" class="btn primary">Play</button>
       </div>
 
       <div id="screen-wait" class="screen hidden">

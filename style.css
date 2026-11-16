@@ -360,3 +360,22 @@ button { font-family: inherit; }
 .mp-tod.rnd { flex: 0 0 auto; padding: 6px 10px; }
 .mp-tod:disabled { opacity: .35; cursor: default; }
 .map-pick.readonly .mp-card.on, .map-pick.readonly .mp-tod.on { opacity: 1; }
+
+/* map screen: a slim list on the left, the court view (player camera) fills the rest */
+#menu.previewing { background: linear-gradient(90deg, rgba(8,8,10,.92) 0%, rgba(8,8,10,.75) 26%, rgba(8,8,10,0) 40%); }
+#menu.previewing .title-row, #menu.previewing .tagline, #menu.previewing .loading { display: none; }
+#menu.previewing .lobby { max-width: 360px; }
+.mp-head { display: flex; align-items: center; gap: 12px; }
+.mp-head .lbl { margin: 0; }
+.mp-title { font-family: var(--display); font-weight: 800; font-size: 34px; margin: 0; text-transform: uppercase; color: var(--blue); line-height: 1; }
+.mp-list { display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 290px); overflow-y: auto; padding-right: 4px; }
+.mp-item { display: flex; align-items: center; gap: 10px; text-align: left; background: rgba(15,15,18,.85); border: 1px solid var(--line); padding: 8px 10px; cursor: pointer; color: var(--text); }
+.mp-item:hover { border-color: #5a5a66; }
+.mp-item.on { border-color: var(--b); box-shadow: inset 4px 0 0 var(--b); background: rgba(30,30,36,.95); }
+.mp-swatch { flex: 0 0 34px; height: 34px; background: linear-gradient(135deg, var(--a) 0 55%, var(--b) 55% 100%); border: 1px solid rgba(255,255,255,.2); }
+.mp-text { display: flex; flex-direction: column; min-width: 0; }
+.mp-text b { font-family: var(--display); font-weight: 800; font-size: 16px; letter-spacing: .5px; text-transform: uppercase; }
+.mp-text small { color: var(--muted); font-size: 11.5px; line-height: 1.25; }
+.mp-item:not(.on) .mp-text small { display: none; }
+.mp-hint { color: var(--muted); font-size: 11.5px; margin: 0; }
+@media (max-width: 700px) { #menu.previewing { background: linear-gradient(180deg, rgba(8,8,10,.92) 0%, rgba(8,8,10,.9) 60%, rgba(8,8,10,.4) 100%); } .mp-list { max-height: 40vh; } }

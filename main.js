@@ -1519,6 +1519,7 @@ window.addEventListener('blur', () => keys.clear());
    Simulation
    ===================================================================== */
 let me = null, them = null, playing = false;
+let mapPreview = false;          // the map-choosing screen is up (camera = player view)
 // ---- teams (2v2 / 3v3, spots may be left empty). In 1v1 none of this is touched: fmt stays '1v1' and `others` stays empty ----
 let fmt = '1v1';                  // room format chosen by the host
 let roster = [];                  // [{ side, pos: 'front'|'back'|'solo', kind: 'open'|'human'|'cpu', id, name }]
@@ -2095,6 +2096,12 @@ const packBall = () => [ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz].map((
 const unpackBall = (a) => ({ x: a[0], y: a[1], z: a[2], vx: a[3], vy: a[4], vz: a[5] });
 
 function onActionKey(code) {
+  if (mapPreview && !playing) {
+    const i = MAPS.findIndex((mp) => mp.id === mapPick.map);
+    if (code === 'ArrowDown' || code === 'ArrowUp') { pickMap({ map: MAPS[(i + (code === 'ArrowDown' ? 1 : MAPS.length - 1)) % MAPS.length].id }); return; }
+    if (code === 'ArrowLeft' || code === 'ArrowRight') { pickMap({ time: mapPick.time === 'day' ? 'night' : 'day' }); return; }
+    if (code === 'Enter') { mapsGo(); return; }
+  }
   if (code === 'KeyH' || code === 'Slash') { toggleHelp(); return; }
   if (code === 'Escape') { toggleHelp(false); return; }
   if (code === 'KeyN') { setMuted(!sfx.muted); return; }
@@ -3922,6 +3929,11 @@ function updateCamera() {
     const kw = F.W / 7.0;                                   // 1 on the normal court, bigger for 3v3
     camPos.set(-s * (F.hl + 6.9 * kw), 5.3 * kw, 0);
     camLook.set(s * 1.6 * kw, 0.55, 0);
+  } else if (mapPreview) {
+    // choosing a map: stand exactly where a player stands, looking at the court
+    const kw = F.W / 7.0;
+    camPos.set(-(F.hl + 6.9 * kw), 5.3 * kw, 0);
+    camLook.set(1.6 * kw, 0.55, 0);
   } else if (pv.p) {
     // customize: close on your player, who stands on the right of the screen
     camPos.set(pv.p.pos.x - 3.4, 1.55, pv.p.pos.z + 0.2);
@@ -3986,6 +3998,9 @@ function showScreen(w) {
   ui.home.classList.toggle('hidden', w !== 'home');
   ui.wait.classList.toggle('hidden', w !== 'wait');
   $('screen-custom').classList.toggle('hidden', w !== 'custom');
+  $('screen-maps').classList.toggle('hidden', w !== 'maps');
+  ui.menu.classList.toggle('previewing', w === 'maps');
+  mapPreview = w === 'maps';
   ui.menu.classList.toggle('customizing', w === 'custom');
   if (w === 'custom') openPreview(); else closePreview();
   if (w === 'home') startLobbyBrowser(); else stopLobbyBrowser();   // only look for games while on the menu
@@ -4651,10 +4666,28 @@ $('cust-random').onclick = () => { myLook = randomLook(); saveLook(); if (pv.p) 
 // your name is remembered as you type it
 ui.name.addEventListener('input', () => { try { localStorage.setItem('takraw-name', ui.name.value.trim().slice(0, 14)); } catch {} });
 
-$('create-btn').onclick = () => hostGame();
+// Create / Practice / Training go through the map screen first
+let mapNext = 'practice';
+function openMaps(next) {
+  readName(); showError('');
+  mapNext = next;
+  $('maps-kicker').textContent = next === 'host' ? 'Create game' : next === 'training' ? 'Training' : 'Practice';
+  $('maps-go').textContent = next === 'host' ? 'Create room' : 'Play';
+  applyArena(mapPick);
+  renderPickers();
+  showScreen('maps');
+}
+function mapsGo() {
+  if (mapNext === 'host') hostGame();
+  else if (mapNext === 'training') playTraining();
+  else practice();
+}
+$('create-btn').onclick = () => openMaps('host');
+$('maps-go').onclick = mapsGo;
+$('maps-back').onclick = () => showScreen('home');
 $('join-btn').onclick = joinGame;
-$('practice-btn').onclick = practice;
-$('train-btn').onclick = playTraining;
+$('practice-btn').onclick = () => openMaps('practice');
+$('train-btn').onclick = () => openMaps('training');
 setDrill(trainDrill);
 // 1v1 room: instead of waiting for a friend, play a CPU right away (this replaces the old Play vs CPU menu row)
 for (const b of document.querySelectorAll('.room-cpu-lvl')) {
@@ -4744,8 +4777,37 @@ function pickMap(ch) {
   renderPickers();
   if (mode === 'host' && teamMode()) sendRoster();
 }
+function renderMapList() {
+  const el = document.getElementById('map-list');
+  if (!el) return;
+  el.textContent = '';
+  for (const m of MAPS) {
+    const b = document.createElement('button');
+    b.className = 'mp-item' + (m.id === mapPick.map ? ' on' : '');
+    b.style.setProperty('--a', m.swatch[0]); b.style.setProperty('--b', m.swatch[1]);
+    const chip = document.createElement('span'); chip.className = 'mp-swatch';
+    const tx = document.createElement('span'); tx.className = 'mp-text';
+    const nm = document.createElement('b'); nm.textContent = m.name;
+    const bl = document.createElement('small'); bl.textContent = m.blurb;
+    tx.append(nm, bl); b.append(chip, tx);
+    b.onclick = () => pickMap({ map: m.id });
+    b.ondblclick = () => mapsGo();
+    el.appendChild(b);
+    if (m.id === mapPick.map) setTimeout(() => b.scrollIntoView({ block: 'nearest' }), 0);
+  }
+  const t = document.getElementById('map-tod');
+  t.textContent = '';
+  for (const [tod, label] of [['day', '☀ Day'], ['night', '☾ Night']]) {
+    const b = document.createElement('button'); b.className = 'mp-tod' + (mapPick.time === tod ? ' on' : ''); b.textContent = label;
+    b.onclick = () => pickMap({ time: tod }); t.appendChild(b);
+  }
+  const r = document.createElement('button'); r.className = 'mp-tod rnd'; r.textContent = '🎲';
+  r.title = 'Random map';
+  r.onclick = () => pickMap({ map: MAPS[Math.floor(Math.random() * MAPS.length)].id, time: Math.random() < 0.5 ? 'day' : 'night' });
+  t.appendChild(r);
+}
 function renderPickers() {
-  renderMapPicker(document.getElementById('home-maps'), mapPick, true);
+  renderMapList();
   const guest = mode === 'guest' && roomView;
   renderMapPicker(document.getElementById('room-maps'), guest ? roomView : mapPick, !guest);
 }
