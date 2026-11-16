@@ -69,6 +69,7 @@ export function buildRooftop(ctx) {
   }
   // the little bar on the −z side: counter, stools, umbrella, neon
   const neon = [];
+  let prangMat = null;
   {
     const bz = -RZ + 1.5;
     put(MAT.vc, paint(new THREE.BoxGeometry(5, 1.1, 0.8), 0x2a2a30), 0, 0.33, bz);
@@ -93,12 +94,33 @@ export function buildRooftop(ctx) {
 
   /* ---------------- the city ---------------- */
   // we're near the top: most of the city is BELOW the roof, with a handful of taller towers poking up
-  const nearCity = skyline({ count: 240, rMin: 46, rMax: 150, hMin: -56, hMax: -8, base: STREET_Y, seed: 314,
+  const TINTS = [0xffffff, 0xd8e4f0, 0xc8d8c8, 0xf0e2c8, 0xb8c8e0, 0xe8d0c0, 0xa8b8c0, 0xf2f2e8];   // glass / concrete / sandstone / teal
+  const nearCity = skyline({ count: 240, rMin: 46, rMax: 150, hMin: -56, hMax: -8, base: STREET_Y, seed: 314, tints: TINTS,
     avoid: (x, z) => Math.abs(x) < 36 && Math.abs(z) < 30 });                 // everything close is below the roof → a view
-  const city = skyline({ count: 150, rMin: 165, rMax: 340, hMin: -30, hMax: 95, base: STREET_Y, seed: 2718 });   // far towers rise up
+  const city = skyline({ count: 150, rMin: 165, rMax: 340, hMin: -30, hMax: 95, base: STREET_Y, seed: 2718, tints: TINTS });   // far towers rise up
   g.add(nearCity.mesh, city.mesh);
   const beacons = [];
   for (const [x, h, z] of city.tops) { const b = new THREE.Mesh(new THREE.SphereGeometry(0.7, 6, 5), MAT.beacon); b.position.set(x, h + 1, z); g.add(b); beacons.push(b); }
+  // roof clutter on the nearby towers (we look down on them): penthouses, water tanks, AC units, antennas, the odd helipad
+  {
+    const parts = [];
+    const P = (geo, col, x, y, z) => { geo.translate(x, y, z); parts.push(paint(geo, col)); };
+    nearCity.boxes.forEach(([x, h, z, w, d], i) => {
+      P(new THREE.BoxGeometry(w + 0.4, 0.5, d + 0.4), 0x8a8a86, x, h + 0.25, z);                       // parapet cap
+      if (i % 3 === 0) P(new THREE.BoxGeometry(w * 0.35, 2.8, d * 0.35), 0xb8b4ac, x - w * 0.18, h + 1.4, z + d * 0.1);   // stair penthouse
+      if (i % 2 === 0) { P(new THREE.CylinderGeometry(1.0, 1.0, 1.8, 10), 0x6a8aa8, x + w * 0.25, h + 2.2, z - d * 0.25); for (const [dx, dz] of [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6]]) P(new THREE.BoxGeometry(0.1, 1.3, 0.1), 0x555555, x + w * 0.25 + dx, h + 0.65, z - d * 0.25 + dz); }
+      for (let k = 0; k < 3; k++) if ((i + k) % 2) P(new THREE.BoxGeometry(1.2, 0.8, 0.8), 0xd6d6d0, x - w * 0.3 + k * 1.6, h + 0.65, z - d * 0.3);
+      if (i % 5 === 1) P(new THREE.CylinderGeometry(0.06, 0.08, 6, 4), 0x9a9a9a, x + w * 0.3, h + 3.2, z + d * 0.3);
+      if (i % 11 === 4) { P(new THREE.CylinderGeometry(Math.min(w, d) * 0.4, Math.min(w, d) * 0.4, 0.12, 20), 0x3a3e44, x, h + 0.56, z); P(new THREE.BoxGeometry(Math.min(w, d) * 0.08, 0.02, Math.min(w, d) * 0.45), 0xf2f2f2, x, h + 0.64, z); }
+    });
+    g.add(new THREE.Mesh(mergeGeometries(parts), vcMat({ flatShading: true })));
+  }
+  // big lit billboards on a few towers facing the court
+  for (const [x, y, z, ry, txt, col] of [[-70, 4, 60, Math.PI * 0.8, 'COCONUT', '#ffd23f'], [80, 6, -70, -Math.PI * 0.2, 'TUK TUK TOURS', '#3fe0ff'], [-90, -2, -55, Math.PI * 0.2, 'MANGO STICKY RICE', '#ff6a3f'], [95, 0, 55, -Math.PI * 0.8, 'SIAM TAKRAW', '#ff3fa0']]) {
+    const b = neonSign(txt, col, 18, 5); b.mesh.position.set(x, y + 6, z); b.mesh.rotation.y = ry; g.add(b.mesh); neon.push(b.mat);
+    for (const dx of [-5, 5]) put(MAT.steel, new THREE.BoxGeometry(0.7, y + 4 - STREET_Y, 0.7), x + Math.cos(ry) * dx, (y + 4 + STREET_Y) / 2, z - Math.sin(ry) * dx);   // tall pylons from the street
+  }
+
   // a few landmark towers: stepped spire tower + a slim needle
   {
     for (const [x, z, s] of [[150, 60, 1], [-170, -40, 0.8]]) {
@@ -113,7 +135,7 @@ export function buildRooftop(ctx) {
     const prang = new THREE.LatheGeometry([[0, 0], [14, 0], [14, 3], [11.5, 3], [11, 9], [9, 9.5], [8.5, 17], [6.5, 17.6], [5.5, 26], [3.5, 28.5], [2.5, 36], [1, 42], [0.4, 48], [0, 54]].map(([r, y]) => new THREE.Vector2(r, y)), 10);
     const pm = new THREE.MeshStandardMaterial({ color: 0xe8c07a, metalness: 0.5, roughness: 0.4, emissive: 0x8a5a18, emissiveIntensity: 0.4 });
     const p = new THREE.Mesh(prang, pm); p.position.set(-30, STREET_Y + 10, 210); g.add(p);
-    neon.push(pm);
+    neon.push(pm); prangMat = pm;
   }
   // the street grid far below (roads glow at night)
   const streetMat = (() => {
@@ -148,7 +170,7 @@ export function buildRooftop(ctx) {
     nearCity.mat.emissiveIntensity = night ? 1.25 : 0;
     tower.mat.emissiveIntensity = night ? 1.0 : 0;
     streetMat.emissiveIntensity = night ? 1.6 : 0;
-    neon.forEach((m, i) => { m.emissiveIntensity = night ? (i === neon.length - 1 ? 1.1 : 1.6) : (i === neon.length - 1 ? 0.15 : 0.5); });
+    neon.forEach((m) => { const prang = m === prangMat; m.emissiveIntensity = night ? (prang ? 1.1 : 1.6) : (prang ? 0.15 : 0.5); });
     MAT.beacon.visible = night;
     for (const b of beacons) b.material.visible = night;
   }

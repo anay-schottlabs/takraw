@@ -131,21 +131,21 @@ export function neonSign(text, color = '#ff3fa0', w = 3, h = 1) {
 }
 
 /** Skyline: many towers merged into a few draw calls. Window grids are a shared texture; lit windows are an emissive map. */
-export function skyline({ count = 160, rMin = 60, rMax = 190, hMin = 18, hMax = 110, seed = 5, base = -60, avoid = () => false }) {
+export function skyline({ count = 160, rMin = 60, rMax = 190, hMin = 18, hMax = 110, seed = 5, base = -60, avoid = () => false, tints = null }) {
   const R = rnd(seed);
   const mk = (lit) => {
     const c = document.createElement('canvas'); c.width = 64; c.height = 64;
     const g = c.getContext('2d');
-    g.fillStyle = lit ? '#000' : '#3d4a5a'; g.fillRect(0, 0, 64, 64);
+    g.fillStyle = lit ? '#000' : '#8a929c'; g.fillRect(0, 0, 64, 64);              // lighter facade so per-building tints read
     for (let y = 0; y < 8; y++) for (let x = 0; x < 4; x++) {
       if (lit) { if (R() < 0.45) { g.fillStyle = ['#ffd890', '#fff0c8', '#bfe0ff', '#ffc070'][Math.floor(R() * 4)]; g.fillRect(x * 16 + 3, y * 8 + 2, 10, 5); } }
-      else { g.fillStyle = R() < 0.5 ? '#8fb2cc' : '#6f8aa2'; g.fillRect(x * 16 + 3, y * 8 + 2, 10, 5); }
+      else { g.fillStyle = R() < 0.5 ? '#5f7f9a' : '#47627a'; g.fillRect(x * 16 + 3, y * 8 + 2, 10, 5); }
     }
     const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.NearestFilter;
     return t;
   };
   const map = mk(false), glow = mk(true);
-  const geos = [], tops = [];
+  const geos = [], tops = [], boxes = [];
   for (let i = 0; i < count; i++) {
     const a = R() * Math.PI * 2, r = rMin + Math.pow(R(), 0.8) * (rMax - rMin);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
@@ -158,13 +158,13 @@ export function skyline({ count = 160, rMin = 60, rMax = 190, hMin = 18, hMax = 
       uv.setXY(k, uv.getX(k) * horiz / 8, uv.getY(k) * (h - base) / 6.5);
     }
     b.translate(x, (h + base) / 2, z);
-    b.rotateY(0);
-    geos.push(b.toNonIndexed());
+    geos.push(tints ? paint(b, tints[Math.floor(R() * tints.length)]) : b.toNonIndexed());
+    boxes.push([x, h, z, w, d]);
     if (h > hMax * 0.55) tops.push([x, h, z]);
   }
-  const mat = new THREE.MeshStandardMaterial({ map, emissiveMap: glow, emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.35, metalness: 0.4 });
+  const mat = new THREE.MeshStandardMaterial({ map, emissiveMap: glow, emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.35, metalness: 0.4, vertexColors: !!tints });
   const mesh = new THREE.Mesh(mergeGeometries(geos), mat);
-  return { mesh, mat, tops };
+  return { mesh, mat, tops, boxes };
 }
 
 /** Paper-lantern festoons between pairs of points; returns an InstancedMesh (bulbs) + the wires. */
