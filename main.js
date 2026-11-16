@@ -101,6 +101,9 @@ composer.addPass(new OutputPass());
    Graphics quality — Auto starts High and steps down if frames run slow
    ===================================================================== */
 const QUALITY = {
+  // ULTRA — opt-in only (Auto never picks it, and never steps down from it): full native resolution, 4096 shadows,
+  // 16× anisotropic textures, and every map's extra `buildUltra()` detail (see the ULTRA contract by setVenue).
+  ultra:  { dpr: 3,    shadow: 4096, soft: true,  bloom: true,  focus: true,  spots: true,  particles: 1.5, ultra: true, aniso: 16 },
   high:   { dpr: 2,    shadow: 2048, soft: true,  bloom: true,  focus: true,  spots: true,  particles: 1 },
   medium: { dpr: 1.25, shadow: 1024, soft: false, bloom: true,  focus: true,  spots: false, particles: 0.7 },
   low:    { dpr: 0.9,  shadow: 0,    soft: false, bloom: false, focus: false, spots: false, particles: 0.4 },
@@ -130,11 +133,12 @@ function applyQuality(level) {
   }
   for (const sp of spotLights) sp.visible = q.spots;
   for (const vn of Object.values(venues)) vn.fx.visible = level !== 'low';   // fireflies, mist, candles, smoke, birds…
+  syncUltra();
   if (prevShadow !== renderer.shadowMap.enabled) {
     scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
   }
   const lbl = document.getElementById('quality-now');
-  if (lbl) lbl.textContent = qualityPref === 'auto' ? `(auto: ${level})` : '';
+  if (lbl) lbl.textContent = qualityPref === 'auto' ? `(auto: ${level})` : level === 'ultra' ? '(needs a strong GPU)' : '';
 }
 function setQualityPref(p) {
   qualityPref = p;
@@ -624,10 +628,11 @@ function setVenue(id) {
   const k = venueKey(id);
   if (VENUE_BUILDERS[id] && !venues[k]) {
     const vn = VENUE_BUILDERS[id]({ F, xf, makeBatch, slope, poly, texLoader, glowTexture, ornamentTexture, panelTexture, spotLights,
-      quality: () => QUALITY[qualityLevel] || QUALITY.medium });
+      quality: () => QUALITY[qualityLevel] || QUALITY.medium, ultra: () => isUltra() });
     vn.fx.visible = qualityLevel !== 'low';
     scene.add(vn.g);
     venues[k] = vn;
+    syncUltra(vn);
     if (timeOfDay) { applyGlow(vn.g); applySpots(); if (vn.setTime) vn.setTime(timeOfDay); }
   }
   templeGroup.visible = id === 'temple';
@@ -638,6 +643,40 @@ function setVenue(id) {
   venueLRU.splice(venueLRU.indexOf(k) >>> 0, venueLRU.includes(k) ? 1 : 0);
   venueLRU.push(k);
   while (venueLRU.length > 4) disposeVenue(venueLRU.shift());
+}
+/* ULTRA contract — what a map builder may return on top of { g, fx, update, setTime?, fog? }:
+     buildUltra()  → THREE.Object3D of extra detail (dense foliage, hi-poly props, extra lights, …). Called lazily the
+                     first time Ultra is on for that map + court size, added under vn.g (so it's disposed with the map),
+                     glow-matched to the time of day, and shown only while Ultra is on. The builder's own setTime/update
+                     closures can drive anything inside it.
+     lite          → optional THREE.Object3D of the normal-quality pieces that the Ultra group REPLACES (hidden on Ultra).
+     onUltra(on)   → optional callback when Ultra is switched on/off for this map (e.g. swap materials, raise counts).
+   Builders also get ctx.ultra() (true while Ultra is on) for choices made at build time. */
+const isUltra = () => !!(QUALITY[qualityLevel] && QUALITY[qualityLevel].ultra);
+function syncUltra(only) {
+  const on = isUltra();
+  for (const vn of only ? [only] : Object.values(venues)) {
+    if (on && vn.buildUltra && !vn.ultraG) {
+      vn.ultraG = vn.buildUltra() || null;
+      if (vn.ultraG) { vn.g.add(vn.ultraG); if (timeOfDay) applyGlow(vn.ultraG); if (vn.setTime && timeOfDay) vn.setTime(timeOfDay); }
+    }
+    if (vn.ultraG) vn.ultraG.visible = on;
+    if (vn.lite) vn.lite.visible = !on;
+    if (vn.onUltra && vn.ultraOn !== on) vn.onUltra(on);
+    vn.ultraOn = on;
+  }
+  applyAniso();
+}
+// texture sharpness at grazing angles (the court and paving seen from the baseline): 16× on Ultra, the default otherwise
+let anisoNow = 0;
+function applyAniso() {
+  const want = isUltra() ? Math.min(QUALITY.ultra.aniso, renderer.capabilities.getMaxAnisotropy()) : 1;
+  if (want === anisoNow && !isUltra()) return;
+  anisoNow = want;
+  scene.traverse((o) => {
+    if (!o.material) return;
+    for (const mt of [].concat(o.material)) for (const v of Object.values(mt)) if (v && v.isTexture && v.anisotropy !== want) { v.anisotropy = want; if (v.image) v.needsUpdate = true; }   // unloaded ones pick it up on upload
+  });
 }
 const venueLRU = [];
 function disposeVenue(key) {
