@@ -3922,7 +3922,82 @@ function fitFov() {
 fitFov();
 
 // Fixed cameras — no following, no smoothing, no orbit.
-function updateCamera() {
+/* =====================================================================
+   Home showreel — the menu drifts through every map with slow camera moves (dolly / crane / orbit), dipping to
+   black between shots; each new map is built while the screen is black so the hitch never shows. Day and night alternate.
+   Shot = { orbit: [r, h | [h0, h1], a0, a1, [cx, cz]?], look } (angle a: x = cos a·r, z = sin a·r)
+        | { p: [from, to], l: [from, to] }
+   ===================================================================== */
+const ORB = (r, h, a0, a1, look = [0, 1, 0], c = [0, 0]) => ({ orbit: [r, h, a0, a1, c], look });
+const DOL = (p0, p1, l0, l1 = l0) => ({ p: [p0, p1], l: [l0, l1] });
+const REEL_DEFAULT = [ORB(17, [3.5, 4.5], 2.6, 2.15, [0, 1.2, 0]), ORB(30, [11, 14], 0.5, 1.0, [0, 0, 0])];
+const REEL_SHOTS = {
+  temple: [DOL([-9.5, 1.6, 2.6], [-3, 2.4, 1.6], [27, 5, 0], [27, 4.2, 0]), ORB(12, [2.4, 6.5], 0.65, 1.2, [0, 1.6, 0]), ORB(34, [15, 18], 3.6, 4.1, [0, 0, 0])],
+  pond: [ORB(16, [1.6, 2.6], 2.45, 1.85, [0, 0.6, 0]), ORB(28, [10, 13], 4.0, 4.6, [0, 0, 0])],
+  terrace: [ORB(14, [8, 11], 4.45, 4.95, [0, -6, 40]), ORB(20, [5, 8], 2.4, 1.7, [0, 0.8, 0])],
+  riverside: [ORB(19, [1.4, 2.4], 1.1, 1.85, [0, 2, -5]), ORB(30, [10, 14], 3.5, 4.1, [0, 0, 0])],
+  rooftop: [ORB(22, [14, 18], 3.5, 4.1, [0, 0, 0]), DOL([-7, 3.5, 2], [7, 3.8, 2], [-14, 10, -90], [14, 13, -90])],
+  market: [DOL([-31, 2.3, 0.5], [-19, 2.7, 0.5], [0, 1.8, 0], [0, 1.4, 0]), DOL([16, 2.6, 0], [13, 7.5, 0], [0, 1.2, 0], [-25, 2.5, 0])],
+  beach: [DOL([-5, 2.4, -2], [5, 3, -1], [-6, 1, 45], [6, 1.5, 45]), ORB(23, [2, 3], 1.2, 1.9, [0, 1.5, 0])],
+  jungle: [DOL([-3, 2.2, -5], [3, 3, -4.5], [-2, 5, 24], [2, 6, 24]), ORB(16, [6, 8], 3.8, 4.4, [0, 0.5, 0])],
+  bamboo: [ORB(12, [1.8, 2.6], 2.8, 2.2, [0, 1.4, 0]), DOL([0, 2, -9.5], [0, 5.5, -9.5], [0, 1, 0], [0, 10, 3])],
+  festival: [ORB(14, [2, 4.5], 1.0, 1.6, [0, 2, 0]), DOL([-6, 2, 1], [-6, 3.5, 1], [12, 6, 0], [12, 20, 0])],
+  palace: [DOL([-12, 2.2, 15], [6, 2.6, 15], [4, 1, 14.5], [20, 1.5, 14.5]), ORB(26, [9, 13], 3.7, 4.3, [0, 0, 0])],
+  monastery: [ORB(17, [6, 8], 4.9, 4.3, [0, 2, 4]), DOL([4, 5, 2.5], [4, 5.6, -2.5], [120, -24, -35], [120, -24, 35])],
+};
+const REEL_D = 7.5, REEL_FADE = 0.8;
+const reel = { on: false, order: [], i: 0, shot: 0, t: 0, time: 'night' };
+const camSm = { pos: new THREE.Vector3(), look: new THREE.Vector3(), snap: true };
+let fadeV = 0, reelShift = 0;
+const reelTmp = new THREE.Vector3();
+const cineFade = document.getElementById('cine-fade'), cineCap = document.getElementById('cine-cap');
+function reelShots(id) { return REEL_SHOTS[id] || REEL_DEFAULT; }
+function reelCaption() {
+  const cap = document.getElementById('cine-cap');
+  cap.querySelector('b').textContent = mapById(venue).name;
+  cap.querySelector('span').textContent = timeOfDay === 'day' ? '☀ Day' : '☾ Night';
+}
+function reelStart() {
+  if (reel.on) return;
+  reel.on = true;
+  setCourtSize('normal');
+  const rest = MAPS.map((mp) => mp.id).filter((id) => id !== venue);
+  for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
+  reel.order = [venue, ...rest]; reel.i = 0; reel.shot = 0; reel.t = 0; reel.time = timeOfDay || 'night';
+  fadeV = 1; camSm.snap = true;
+  reelCaption();
+}
+function reelStop() { reel.on = false; }
+function reelCam(shot, u, pos, look) {
+  const e = u * 0.55 + u * u * (3 - 2 * u) * 0.45;                       // mostly constant speed, softened ends
+  if (shot.orbit) {
+    const [r, h, a0, a1, c] = shot.orbit, a = a0 + (a1 - a0) * e, y = Array.isArray(h) ? h[0] + (h[1] - h[0]) * e : h;
+    pos.set(c[0] + Math.cos(a) * r, y, c[1] + Math.sin(a) * r); look.fromArray(shot.look);
+  } else {
+    pos.fromArray(shot.p[0]).lerp(reelTmp.fromArray(shot.p[1]), e);
+    look.fromArray(shot.l[0]).lerp(reelTmp.fromArray(shot.l[1]), e);
+  }
+}
+function reelUpdate(dt) {
+  reel.t += dt;
+  if (reel.t >= REEL_D) {
+    reel.t = 0; camSm.snap = true;
+    if (++reel.shot >= reelShots(venue).length) {
+      reel.shot = 0; reel.i = (reel.i + 1) % reel.order.length;
+      reel.time = reel.time === 'day' ? 'night' : 'day';
+      applyArena({ map: reel.order[reel.i], time: reel.time });   // built while the screen is black
+      reelCaption();
+    }
+  }
+  const d = Math.min(reel.t, REEL_D - reel.t) / REEL_FADE;
+  fadeV = d >= 1 ? 0 : 1 - d * d * (3 - 2 * d);
+  reelCam(reelShots(venue)[reel.shot], reel.t / REEL_D, camPos, camLook);
+}
+// a dip to black, e.g. when leaving the showreel for a different map
+function dipToBlack() { fadeV = 1; camSm.snap = true; }
+window.__reelAt = (id, s, u, time) => { reelStop(); applyArena({ map: id, time: time || 'day' }); reel.debug = { s, u }; };   // testing hook
+
+function updateCamera(dt = 1 / 60) {
   if (me && playing) {
     // locked behind your own baseline, framing your whole half and the net
     const s = sideSign(me.side);
@@ -3938,14 +4013,34 @@ function updateCamera() {
     // customize: close on your player, who stands on the right of the screen
     camPos.set(pv.p.pos.x - 3.4, 1.55, pv.p.pos.z + 0.2);
     camLook.set(pv.p.pos.x, 1.0, pv.p.pos.z - 1.15);
+  } else if (reel.on) {
+    reelUpdate(dt);
+  } else if (reel.debug) {
+    reelCam(reelShots(venue)[reel.debug.s], reel.debug.u, camPos, camLook);
   } else {
-    // lobby: one still three-quarter view of the deck
+    // room screen: one still three-quarter view of the deck
     camPos.set(-14, 6.5, 11);
     camLook.set(0, 0.6, 0);
   }
   if (window.__takrawCam) { camPos.fromArray(window.__takrawCam.pos); camLook.fromArray(window.__takrawCam.look); }   // debug free camera (testing only)
-  camera.position.copy(camPos);
-  camera.lookAt(camLook);
+  if (me && playing) {
+    camSm.pos.copy(camPos); camSm.look.copy(camLook); camSm.snap = true;      // in a match the camera is exact, never smoothed
+  } else if (camSm.snap || window.__takrawCam || reel.debug) {
+    camSm.pos.copy(camPos); camSm.look.copy(camLook); camSm.snap = false;
+  } else {
+    // menus: glide between views (showreel → player view on the map screen, → customize close-up, …)
+    const k = reel.on ? 1 : 1 - Math.exp(-dt * 3.2);
+    camSm.pos.lerp(camPos, k); camSm.look.lerp(camLook, k);
+  }
+  if (!reel.on && fadeV > 0) fadeV = Math.max(0, fadeV - dt * 1.8);
+  if (!playing && cineFade) { cineFade.style.opacity = fadeV.toFixed(3); cineCap.style.opacity = reel.on ? (1 - fadeV).toFixed(3) : '0'; }
+  // on the home screen the shot is framed a little right, clear of the menu panel
+  const shiftT = reel.on && window.innerWidth > 700 ? 1 : 0;
+  reelShift = playing ? 0 : reelShift + (shiftT - reelShift) * Math.min(1, dt * 3);   // a match is always framed exactly
+  if (reelShift > 0.002) camera.setViewOffset(window.innerWidth, window.innerHeight, -window.innerWidth * 0.13 * reelShift, 0, window.innerWidth, window.innerHeight);
+  else if (camera.view && camera.view.enabled) camera.clearViewOffset();
+  camera.position.copy(camSm.pos);
+  camera.lookAt(camSm.look);
   if (trauma > 0) {
     const t = performance.now() / 1000, k = trauma * trauma;
     camera.position.x += Math.sin(t * 71) * 0.22 * k;
@@ -4004,6 +4099,9 @@ function showScreen(w) {
   ui.menu.classList.toggle('customizing', w === 'custom');
   if (w === 'custom') openPreview(); else closePreview();
   if (w === 'home') startLobbyBrowser(); else stopLobbyBrowser();   // only look for games while on the menu
+  ui.menu.classList.toggle('reel', w === 'home');
+  if (w === 'home') reelStart(); else reelStop();
+  if (w === 'game') { fadeV = 0; cineFade.style.opacity = '0'; }
 }
 function setStatus(s) { ui.status.textContent = s; }
 function setBoardNames() {
@@ -4673,6 +4771,7 @@ function openMaps(next) {
   mapNext = next;
   $('maps-kicker').textContent = next === 'host' ? 'Create game' : next === 'training' ? 'Training' : 'Practice';
   $('maps-go').textContent = next === 'host' ? 'Create room' : 'Play';
+  if (mapPick.map !== venue || mapPick.time !== timeOfDay) dipToBlack();   // same map → the camera glides down to the player view
   applyArena(mapPick);
   renderPickers();
   showScreen('maps');
@@ -4849,6 +4948,7 @@ function frame() {
   if (PERF) { const t2 = performance.now(); perf.upd += t1 - t0; perf.ren += t2 - t1; perf.frame += dt * 1000; perf.n++; }
   requestAnimationFrame(frame);
 }
+if (!ui.home.classList.contains('hidden')) { ui.menu.classList.add('reel'); reelStart(); }   // the menu opens on the showreel
 frame();
 
 window.addEventListener('resize', () => {
