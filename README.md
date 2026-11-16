@@ -27,7 +27,14 @@ WASD move · Space jump · J set / dig (tap on green) · K kick / spike (tap on 
 - At the net, jump and press L right as their attack crosses over you: perfect = stuffed straight back down (very hard to return), good = deflected and still playable, otherwise it gets past you.
 - A J on your third touch is an emergency save that goes over the net — it can never cause a fourth touch.
 
+## Maps
+Pick a map (and **Day** or **Night**) on the menu or in your room — the menu backdrop previews it, guests play the host's choice, and open games list it. Every map works for 1v1, 2v2 and 3v3 (3v3 gets a larger version).
+- **Temple Courtyard** — ordination halls, galleries, chedis, lantern festoons
+- **Lotus Pond** — a teak deck in a lotus pond: koi, bridges to two salas, candle boats and fireflies at night
+- **Hill Tribe Terrace** — rice terraces, a stilt village, sunflowers, misty mountains and a golden chedi
+- More on the way: Riverside Pier, Bangkok Rooftop, Night Market Alley, Karst Beach, Jungle Waterfall, Bamboo Forest, Lantern Festival, Palace Garden, Cloud Monastery
+
 ## Modes
-- **Create / Join** — online rooms (peer-to-peer): **1v1, 2v2 or 3v3** (spots can be friends, CPUs, or left empty — e.g. 2v2 with an empty spot plays 2 vs 1) (2v2 plays on the Hill Tribe Terrace — rice terraces, a stilt village and misty mountains at sunset; 3v3 plays on its own venue: a bigger court on a teak deck in a lotus pond, with koi, bridges to two salas, candle boats and fireflies). The host picks the format; empty spots can be friends or CPUs ("+ CPU", or Start fills them). Teams share 3 touches; the serve rotates through teammates. If someone drops mid-match a CPU takes their spot. Open games are listed on the menu with format and fill (e.g. `2v2 · 2/4`).
+- **Create / Join** — online rooms (peer-to-peer): **1v1, 2v2 or 3v3** (spots can be friends, CPUs, or left empty — e.g. 2v2 with an empty spot plays 2 vs 1) — 3v3 plays a bigger version of the court. The host picks the format; empty spots can be friends or CPUs ("+ CPU", or Start fills them). Teams share 3 touches; the serve rotates through teammates. If someone drops mid-match a CPU takes their spot. Open games are listed on the menu with format and fill (e.g. `2v2 · 2/4`).
 - **Vs CPU** — create a 1v1 room and pick a CPU (Easy / Normal / Hard / Unbeatable) instead of waiting for a friend. It reads the ball, controls, sets, spikes, digs, blocks and serves.
 - **Practice** — ball machine (F) and serving practice (J).

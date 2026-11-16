@@ -9,6 +9,7 @@ import { sfx } from './sfx.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { buildPond } from './pond.js';
 import { buildTerrace } from './terrace.js';
+import { MAPS, mapById } from './maps.js';
 
 /* =====================================================================
    FIELD SPEC — ISTAF sepak takraw court (metres)
@@ -156,14 +157,15 @@ function autoQuality(dt) {
    The last warm light rakes in low from the +z side, so both players see
    long shadows across the court and the sunset glow off to one side.
    ===================================================================== */
-scene.add(new THREE.HemisphereLight(0x9d8cd0, 0x4a2a1c, 0.5));
+const hemi = new THREE.HemisphereLight(0x9d8cd0, 0x4a2a1c, 0.5);
+scene.add(hemi);
 
 const key = new THREE.DirectionalLight(0xffb27a, 1.9);
 key.position.set(4, 11, 19);                      // ~30° up, from the +z sideline
 key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048);
 // fitted to the court + free zone as seen from the light (low sun → wide, short frustum)
-Object.assign(key.shadow.camera, { left: -12.8, right: 12.8, top: 8, bottom: -5.5, near: 5, far: 40 });
+Object.assign(key.shadow.camera, { left: -16, right: 16, top: 14, bottom: -14, near: 2, far: 60 });   // fits the court + free zone from both the sun and moon angles
 key.shadow.bias = -0.0004;
 key.shadow.normalBias = 0.02;
 scene.add(key);
@@ -180,48 +182,60 @@ const texLoader = new THREE.TextureLoader(manager);
 const pmrem = new THREE.PMREMGenerator(renderer);
 
 /* ---------------------------------------------------------------------
-   Dusk sky — painted once into an equirectangular canvas (no download).
+   Skies — DAY and NIGHT, each painted once into an equirectangular canvas (no download) and cached.
    The same image is the backdrop and, pre-filtered, the environment light.
    Canvas row 0 = zenith, middle row = horizon; column u ↔ azimuth atan2(z, x).
    --------------------------------------------------------------------- */
-const SUN_AZ = Math.atan2(key.position.z, key.position.x);   // sun has just set behind the +z gallery
-function paintSky() {
+const LIGHT_POS = { day: [6, 22, 10], night: [-7, 15, -14] };      // sun / moon direction (also the key light)
+const SKY_STYLE = {
+  day: {
+    near: [[0, [222, 236, 244]], [0.06, [190, 220, 242]], [0.25, [128, 182, 232]], [0.6, [76, 136, 214]], [1, [46, 100, 196]]],
+    far: [[0, [214, 230, 240]], [0.08, [176, 210, 236]], [0.3, [116, 170, 226]], [0.6, [70, 128, 206]], [1, [44, 96, 190]]],
+    below: [70, 90, 84], glowCol: [255, 248, 226], tree: '#3c564f', ground: '#2c3b38',
+  },
+  night: {
+    near: [[0, [44, 54, 96]], [0.05, [30, 38, 76]], [0.22, [16, 22, 50]], [1, [4, 6, 16]]],
+    far: [[0, [34, 42, 82]], [0.06, [22, 28, 60]], [0.28, [12, 16, 38]], [1, [3, 5, 14]]],
+    below: [6, 7, 12], glowCol: [120, 140, 210], tree: '#06070c', ground: '#030306',
+  },
+};
+function paintSky(mode) {
+  const S = SKY_STYLE[mode];
   const W = 2048, H = 1024, w = 512, h = 256;
   const lerp = (a, b, t) => a + (b - a) * t;
   const mix = (A, B, t) => [lerp(A[0], B[0], t), lerp(A[1], B[1], t), lerp(A[2], B[2], t)];
-  // elevation stops (0 = horizon, 1 = zenith): toward the sun / away from it
-  const NEAR = [[0, [255, 160, 104]], [0.04, [236, 126, 112]], [0.13, [150, 78, 132]], [0.36, [60, 46, 106]], [1, [18, 24, 58]]];
-  const FAR = [[0, [168, 104, 146]], [0.04, [146, 88, 140]], [0.13, [96, 62, 124]], [0.36, [46, 40, 96]], [1, [18, 24, 58]]];
-  const ramp = (S, t) => {
-    for (let i = 1; i < S.length; i++) if (t <= S[i][0]) return mix(S[i - 1][1], S[i][1], (t - S[i - 1][0]) / (S[i][0] - S[i - 1][0]));
-    return S[S.length - 1][1];
+  const ramp = (St, t) => {
+    for (let i = 1; i < St.length; i++) if (t <= St[i][0]) return mix(St[i - 1][1], St[i][1], (t - St[i - 1][0]) / (St[i][0] - St[i - 1][0]));
+    return St[St.length - 1][1];
   };
-  const sx = Math.cos(SUN_AZ), sz = Math.sin(SUN_AZ), sy = -0.035;
+  const [lx, ly, lz] = LIGHT_POS[mode];
+  const LAZ = Math.atan2(lz, lx), LEL = Math.atan2(ly, Math.hypot(lx, lz));
+  const sx = Math.cos(LEL) * Math.cos(LAZ), sy = Math.sin(LEL), sz = Math.cos(LEL) * Math.sin(LAZ);
   const lo = document.createElement('canvas');
   lo.width = w; lo.height = h;
   const lg = lo.getContext('2d');
   const img = lg.createImageData(w, h);
-  const skyAt = [];                                     // low-res colours, reused for the moon's shadow
   for (let j = 0; j < h; j++) {
     const e = (0.5 - (j + 0.5) / h) * Math.PI;
     const ce = Math.cos(e), se = Math.sin(e);
     for (let i = 0; i < w; i++) {
       const phi = ((i + 0.5) / w - 0.5) * Math.PI * 2;
       const dx = ce * Math.cos(phi), dz = ce * Math.sin(phi);
-      const cosSun = Math.max(-1, Math.min(1, dx * sx + se * sy + dz * sz));
+      const cosL = Math.max(-1, Math.min(1, dx * sx + se * sy + dz * sz));
       let c;
-      if (e < 0) c = [18, 13, 24];
+      if (e < 0) c = S.below;
       else {
         const t = e / (Math.PI / 2);
-        const toward = Math.pow((cosSun + 1) / 2, 1.6);
-        c = mix(ramp(FAR, t), ramp(NEAR, t), toward);
-        const a = Math.acos(cosSun);
-        const glow = (0.75 * Math.exp(-((a / 0.32) ** 2)) + 0.3 * Math.exp(-((a / 0.95) ** 2))) * (1 - t) ** 2.2;
-        c = [c[0] + 255 * glow, c[1] + 168 * glow, c[2] + 92 * glow];
+        const toward = Math.pow((Math.max(-1, Math.min(1, dx * Math.cos(LAZ) + dz * Math.sin(LAZ))) + 1) / 2, 1.6);
+        c = mix(ramp(S.far, t), ramp(S.near, t), toward);
+        const a = Math.acos(cosL);
+        const glow = mode === 'day'
+          ? 0.9 * Math.exp(-((a / 0.1) ** 2)) + 0.32 * Math.exp(-((a / 0.55) ** 2))        // sun halo
+          : 0.18 * Math.exp(-((a / 0.35) ** 2));                                            // moonlit patch
+        c = [c[0] + S.glowCol[0] * glow, c[1] + S.glowCol[1] * glow, c[2] + S.glowCol[2] * glow];
       }
       const k = (j * w + i) * 4;
       img.data[k] = Math.min(255, c[0]); img.data[k + 1] = Math.min(255, c[1]); img.data[k + 2] = Math.min(255, c[2]); img.data[k + 3] = 255;
-      skyAt[j * w + i] = c;
     }
   }
   lg.putImageData(img, 0, 0);
@@ -236,87 +250,128 @@ function paintSky() {
   const Y = (deg) => H / 2 - deg * PX;
   let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-
-  // stars — only up where the sky has gone dark, fewer toward the sunset
-  for (let i = 0; i < 520; i++) {
-    const deg = 14 + Math.pow(rnd(), 0.7) * 62, phi = (rnd() - 0.5) * Math.PI * 2;
-    const away = (1 - Math.cos(phi - SUN_AZ)) / 2;
-    const a = rnd() * Math.min(1, (deg - 14) / 22) * (0.25 + 0.75 * away);
-    if (a < 0.08) continue;
-    const s = rnd() < 0.1 ? 2.2 : 1.4;
-    g.fillStyle = `rgba(255,246,232,${a.toFixed(3)})`;
-    g.fillRect(X(phi), Y(deg), s / Math.cos(deg * Math.PI / 180), s);
-  }
-
-  // thin streaks of cloud low on the horizon, lit peach toward the sun, mauve away from it
-  for (let i = 0; i < 16; i++) {
-    const phi = (rnd() - 0.5) * Math.PI * 2, deg = 4 + rnd() * 12;
-    const toward = (1 + Math.cos(phi - SUN_AZ)) / 2;
-    const col = toward > 0.6 ? '255,178,138' : toward > 0.3 ? '214,130,150' : '120,84,140';
-    const wpx = (18 + rnd() * 30) * PX, hpx = (0.8 + rnd() * 1.6) * PX;
+  const blob = (phi, deg, wpx, hpx, rgba) => {
     for (const off of [-W, 0, W]) {
-      g.save();
-      g.translate(X(phi) + off, Y(deg));
-      g.scale(wpx / hpx, 1);
+      g.save(); g.translate(X(phi) + off, Y(deg)); g.scale(wpx / hpx, 1);
       const rg = g.createRadialGradient(0, 0, 0, 0, 0, hpx);
-      rg.addColorStop(0, `rgba(${col},${(0.35 + toward * 0.3).toFixed(2)})`);
-      rg.addColorStop(1, `rgba(${col},0)`);
-      g.fillStyle = rg;
-      g.beginPath(); g.arc(0, 0, hpx, 0, Math.PI * 2); g.fill();
+      rg.addColorStop(0, rgba(1)); rg.addColorStop(0.6, rgba(0.55)); rg.addColorStop(1, rgba(0));
+      g.fillStyle = rg; g.beginPath(); g.arc(0, 0, hpx, 0, Math.PI * 2); g.fill();
       g.restore();
     }
+  };
+
+  if (mode === 'night') {
+    // the Milky Way: a soft band of haze with a dense spray of faint stars along it
+    for (let i = 0; i < 60; i++) {
+      const phi = (i / 60 - 0.5) * Math.PI * 2, deg = 34 + 24 * Math.sin(phi * 1 + 0.8);
+      blob(phi, deg, 10 * PX, 3.2 * PX, (a) => `rgba(170,180,230,${(0.07 * a).toFixed(3)})`);
+    }
+    for (let i = 0; i < 2600; i++) {
+      const phi = (rnd() - 0.5) * Math.PI * 2;
+      const band = rnd() < 0.45;
+      const deg = band ? 34 + 24 * Math.sin(phi + 0.8) + (rnd() - 0.5) * 9 : 6 + Math.pow(rnd(), 0.8) * 78;
+      const a = (band ? 0.25 : 0.35) + rnd() * 0.65 * Math.min(1, (deg - 4) / 10);
+      const s = rnd() < 0.06 ? 2.4 : rnd() < 0.3 ? 1.6 : 1.1;
+      g.fillStyle = `rgba(255,248,236,${Math.max(0, a).toFixed(3)})`;
+      g.fillRect(X(phi), Y(deg), s / Math.cos(deg * Math.PI / 180), s);
+    }
+    // a few dark cloud wisps low down, silvered by the moon
+    for (let i = 0; i < 10; i++) blob((rnd() - 0.5) * Math.PI * 2, 4 + rnd() * 9, (16 + rnd() * 26) * PX, (0.8 + rnd() * 1.3) * PX, (a) => `rgba(60,70,110,${(0.45 * a).toFixed(2)})`);
+    // full moon at the key light's direction
+    {
+      const deg = LEL * 180 / Math.PI, r = 1.6 * PX, mx = X(LAZ), my = Y(deg), stretch = 1 / Math.cos(LEL);
+      g.save(); g.translate(mx, my); g.scale(stretch, 1);
+      const halo = g.createRadialGradient(0, 0, r, 0, 0, r * 9);
+      halo.addColorStop(0, 'rgba(220,230,255,0.35)'); halo.addColorStop(1, 'rgba(220,230,255,0)');
+      g.fillStyle = halo; g.beginPath(); g.arc(0, 0, r * 9, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#f4f2ea'; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
+      g.fillStyle = 'rgba(180,176,170,0.5)';                                        // maria
+      for (const [dx, dy, rr] of [[-0.3, -0.2, 0.32], [0.25, 0.1, 0.25], [-0.05, 0.35, 0.2]]) { g.beginPath(); g.arc(dx * r, dy * r, rr * r, 0, Math.PI * 2); g.fill(); }
+      g.restore();
+    }
+  } else {
+    // sun disc
+    {
+      const deg = LEL * 180 / Math.PI, r = 1.2 * PX, stretch = 1 / Math.cos(LEL);
+      g.save(); g.translate(X(LAZ), Y(deg)); g.scale(stretch, 1);
+      g.fillStyle = '#fffdf2'; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
+      g.restore();
+    }
+    // puffy fair-weather cumulus
+    for (let i = 0; i < 26; i++) {
+      const phi = (rnd() - 0.5) * Math.PI * 2, deg = 5 + rnd() * 20, size = (2 + rnd() * 3.5) * PX;
+      for (let k = 0; k < 7; k++) {
+        const dp = (rnd() - 0.5) * size * 3 / W * Math.PI * 2, dd = rnd() * size / PX * 0.6;
+        blob(phi + dp, deg + dd, size * (0.8 + rnd() * 0.6), size * (0.55 + rnd() * 0.3), (a) => `rgba(255,255,255,${(0.75 * a).toFixed(2)})`);
+      }
+      blob(phi, deg - size / PX * 0.25, size * 2.6, size * 0.35, (a) => `rgba(170,190,215,${(0.35 * a).toFixed(2)})`);   // shaded bases
+    }
+    // high streaks
+    for (let i = 0; i < 12; i++) blob((rnd() - 0.5) * Math.PI * 2, 25 + rnd() * 30, (20 + rnd() * 30) * PX, 0.7 * PX, (a) => `rgba(255,255,255,${(0.25 * a).toFixed(2)})`);
   }
 
-  // crescent moon, high on the side away from the sunset
-  {
-    const phi = SUN_AZ + Math.PI - 0.55, deg = 24, r = 1.3 * PX;
-    const mx = X(phi), my = Y(deg), stretch = 1 / Math.cos(deg * Math.PI / 180);
-    g.save();
-    g.translate(mx, my); g.scale(stretch, 1);
-    const halo = g.createRadialGradient(0, 0, r, 0, 0, r * 7);
-    halo.addColorStop(0, 'rgba(255,240,214,0.28)'); halo.addColorStop(1, 'rgba(255,240,214,0)');
-    g.fillStyle = halo; g.beginPath(); g.arc(0, 0, r * 7, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#fff3dc'; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
-    const sc = skyAt[Math.min(h - 1, Math.floor(my / H * h)) * w + Math.floor(mx / W * w)] || [40, 36, 90];
-    g.fillStyle = `rgb(${sc.map((v) => Math.round(Math.min(255, v))).join(',')})`;
-    g.beginPath(); g.arc(r * 0.55, -r * 0.2, r * 0.92, 0, Math.PI * 2); g.fill();   // lit limb faces the set sun
-    g.restore();
-  }
-
-  // distant tree line (and a few far-off spires) along the whole horizon, just over the courtyard walls
-  g.fillStyle = '#1c1428';
+  // distant tree line (and a few far-off spires) along the whole horizon
+  g.fillStyle = S.tree;
   g.beginPath();
   g.moveTo(0, Y(-4));
   const p1 = rnd() * 6, p2 = rnd() * 6;
   for (let x = 0; x <= W; x += 3) {
     const t = (x / W) * Math.PI * 2;
     let d = 1.6 + 0.9 * Math.sin(t * 7 + p1) + 0.5 * Math.sin(t * 19 + p2) + 0.35 * Math.sin(t * 53);
-    d += Math.max(0, Math.sin(t * 97 + p1 * 3)) * 0.9;   // individual crowns
+    d += Math.max(0, Math.sin(t * 97 + p1 * 3)) * 0.9;
     g.lineTo(x, Y(Math.max(0.4, d)));
   }
   g.lineTo(W, Y(-4));
   g.closePath();
   g.fill();
-  for (const az of [0.4, 1.15, 2.6, 3.4, 4.3, 5.6]) {      // slender spires on far temples
+  for (const az of [0.4, 1.15, 2.6, 3.4, 4.3, 5.6]) {
     const x = (az / (Math.PI * 2)) * W, base = Y(2.2), tip = Y(5.5 + (az % 1) * 2.5);
     g.beginPath(); g.moveTo(x - 0.9 * PX, base); g.lineTo(x, tip); g.lineTo(x + 0.9 * PX, base); g.closePath(); g.fill();
     g.fillRect(x - 1.6 * PX, base, 3.2 * PX, Y(-1) - base);
   }
-  g.fillStyle = '#120d18';
+  g.fillStyle = S.ground;
   g.fillRect(0, Y(-4) - 1, W, H - Y(-4) + 1);
   return c;
 }
-{
-  const sky = new THREE.CanvasTexture(paintSky());
-  sky.colorSpace = THREE.SRGBColorSpace;
-  sky.mapping = THREE.EquirectangularReflectionMapping;
-  scene.background = sky;
-  scene.backgroundIntensity = 1.1;
-  scene.environment = pmrem.fromEquirectangular(sky).texture;   // glossy court reflects the dusk sky
-  scene.environmentIntensity = 0.7;
+const skies = {};
+function skyFor(mode) {
+  if (!skies[mode]) {
+    const t = new THREE.CanvasTexture(paintSky(mode));
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.mapping = THREE.EquirectangularReflectionMapping;
+    skies[mode] = { tex: t, env: pmrem.fromEquirectangular(t).texture };
+  }
+  return skies[mode];
 }
-// a little dusk haze so the far halls and spires sit back in the air
-scene.fog = new THREE.Fog(0x7a5274, 26, 150);
+scene.fog = new THREE.Fog(0x0b1022, 26, 150);
+
+/* ---------------- TIME OF DAY: one rig, two settings ---------------- */
+const TIMES = {
+  day: { key: 0xfff0dc, keyI: 2.6, hemiSky: 0xcfe4ff, hemiGround: 0x6b6648, hemiI: 1.0, fog: 0xc8dce8, fogN: 55, fogF: 320,
+    envI: 0.75, bgI: 1.0, exposure: 1.0, bloom: 0.22, glowK: 0.35, addK: 0.22, spots: 0 },
+  night: { key: 0xaabdff, keyI: 0.75, hemiSky: 0x4a5a96, hemiGround: 0x15141c, hemiI: 0.55, fog: 0x0c1124, fogN: 30, fogF: 165,
+    envI: 0.35, bgI: 1.0, exposure: 1.12, bloom: 0.6, glowK: 1, addK: 1, spots: 1 },
+};
+let timeOfDay = null;
+// lamps, lanterns, glow pools: full at night, mostly off by day (originals are remembered on first touch)
+function applyGlow(root) {
+  if (!root || !timeOfDay) return;
+  const T = TIMES[timeOfDay];
+  root.traverse((o) => {
+    if (!o.material) return;
+    for (const m of [].concat(o.material)) {
+      if (!m || m.isShaderMaterial) continue;
+      const u = m.userData;
+      if (m.blending === THREE.AdditiveBlending) {
+        if (u.baseOpacity === undefined) u.baseOpacity = m.opacity;
+        m.opacity = u.baseOpacity * T.addK;
+      } else if ((m.isMeshBasicMaterial || m.isSpriteMaterial) && m.color) {
+        if (u.baseColor === undefined) u.baseColor = Math.max(m.color.r, m.color.g, m.color.b) > 1.05 ? m.color.clone() : null;
+        if (u.baseColor) m.color.copy(u.baseColor).multiplyScalar(T.glowK);
+      }
+    }
+  });
+}
 
 /* =====================================================================
    Court floor — one painted texture for the court + free zone
@@ -544,26 +599,57 @@ function setCourtSize(size) {
   boardsGroup.visible = venue === 'temple';
   buildSideGlow();
   landingDirty = true;
+  if (timeOfDay) { applyGlow(courtGroup); applyGlow(boardsGroup); }
+  setVenue(venue);
 }
-// VENUES: 1v1 plays in the temple courtyard, 2v2 on the Hill Tribe Terrace, 3v3 on the Lotus Pond. Each venue is built the
-// first time it's needed and swapped in whole — none of one is ever visible in another mode.
-let venue = 'temple';
-const venues = {};             // name → { g, fx, update }
+// MAPS (venues): picked per game from the map list (maps.js), in DAY or NIGHT. Each is built the first time it's needed at a
+// court size (3v3 gets the bigger version), cached, and swapped in whole — nothing from one map is visible on another.
+let venue = 'temple';                 // map id on screen
+const venues = {};                    // `${id}:${size}` → { g, fx, update, setTime? }
 const VENUE_BUILDERS = { pond: buildPond, terrace: buildTerrace };
-function setVenue(v) {
-  if (v === venue) return;
-  venue = v;
-  if (VENUE_BUILDERS[v] && !venues[v]) {
-    venues[v] = VENUE_BUILDERS[v]({ F, xf, makeBatch, slope, poly, texLoader, glowTexture, ornamentTexture, panelTexture, spotLights,
+const venueKey = (id) => `${id}:${courtSize}`;
+function setVenue(id) {
+  if (id !== 'temple' && !VENUE_BUILDERS[id]) id = 'temple';
+  venue = id;
+  const k = venueKey(id);
+  if (VENUE_BUILDERS[id] && !venues[k]) {
+    const vn = VENUE_BUILDERS[id]({ F, xf, makeBatch, slope, poly, texLoader, glowTexture, ornamentTexture, panelTexture, spotLights,
       quality: () => QUALITY[qualityLevel] || QUALITY.medium });
-    venues[v].fx.visible = qualityLevel !== 'low';
-    scene.add(venues[v].g);
+    vn.fx.visible = qualityLevel !== 'low';
+    scene.add(vn.g);
+    venues[k] = vn;
+    if (timeOfDay) { applyGlow(vn.g); applySpots(); if (vn.setTime) vn.setTime(timeOfDay); }
   }
-  templeGroup.visible = v === 'temple';
-  boardsGroup.visible = v === 'temple';
-  for (const [name, vn] of Object.entries(venues)) vn.g.visible = name === v;
+  templeGroup.visible = id === 'temple';
+  boardsGroup.visible = id === 'temple';
+  for (const [key, vn] of Object.entries(venues)) vn.g.visible = key === k;
 }
-
+const currentVenue = () => venues[venueKey(venue)] || null;
+function applySpots() {
+  const T = TIMES[timeOfDay || 'night'];
+  for (const sp of spotLights) { if (sp.userData.base === undefined) sp.userData.base = sp.intensity; sp.intensity = sp.userData.base * T.spots; }
+}
+function setTimeOfDay(t) {
+  if (!TIMES[t]) t = 'night';
+  timeOfDay = t;
+  const T = TIMES[t], sky = skyFor(t);
+  scene.background = sky.tex; scene.backgroundIntensity = T.bgI;
+  scene.environment = sky.env; scene.environmentIntensity = T.envI;
+  scene.fog.color.set(T.fog); scene.fog.near = T.fogN; scene.fog.far = T.fogF;
+  key.color.set(T.key); key.intensity = T.keyI; key.position.set(...LIGHT_POS[t]);
+  hemi.color.set(T.hemiSky); hemi.groundColor.set(T.hemiGround); hemi.intensity = T.hemiI;
+  renderer.toneMappingExposure = T.exposure;
+  bloom.strength = T.bloom;
+  applySpots();
+  for (const r of [templeGroup, boardsGroup, courtGroup]) applyGlow(r);
+  for (const vn of Object.values(venues)) { applyGlow(vn.g); if (vn.setTime) vn.setTime(t); }
+}
+// what the player has picked (remembered), and the map of the game in progress (a guest gets it from the host)
+let mapPick = { map: 'temple', time: 'night' };
+try { const m = JSON.parse(localStorage.getItem('takraw-mappick') || 'null'); if (m) mapPick = { map: mapById(m.map).id, time: m.time === 'day' ? 'day' : 'night' }; } catch {}
+let gameMap = null;
+const cleanChoice = (m, t) => ({ map: mapById(m).id, time: t === 'day' ? 'day' : 'night' });
+function applyArena(choice) { setVenue(choice.map); setTimeOfDay(choice.time); }
 
 /* =====================================================================
    Surroundings — temple courtyard at dusk
@@ -3831,7 +3917,7 @@ function updateCamera() {
 /* =====================================================================
    Networking — PeerJS (WebRTC), no game server
    ===================================================================== */
-const PROTOCOL = 7;   // 7: player looks in hello / roster.
+const PROTOCOL = 8;   // 8: map + time of day in hello / roster / start / lobby adverts (7: player looks)
 const PROTOCOL_6_NOTE = 6;   // 6: rooms (1v1 / 2v1 / 2v2) — the guest waits for the host's hello; touches + positions carry a player id
 const PREFIX = 'takraw-iso-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -3878,6 +3964,8 @@ function setBoardNames() {
 
 function startGame(side) {
   playing = true;
+  if (!teamMode()) setCourtSize('normal');
+  applyArena(gameMap || mapPick);
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   setMeterZones();
   resetAim();
@@ -3937,7 +4025,7 @@ function wirePos(c) {
 function wireConnection(c) {
   conn = c;
   c.on('open', () => {
-    c.send({ t: 'hello', name: myName, v: PROTOCOL, look: myLook });
+    c.send({ t: 'hello', name: myName, v: PROTOCOL, look: myLook, ...(mode === 'host' ? { map: mapPick.map, time: mapPick.time } : {}) });
     if (mode === 'guest') return;          // the guest waits for the host's hello: it says whether this is a 1v1 or a team room
     begin1v1(c);
   });
@@ -3963,6 +4051,7 @@ function wireConnection(c) {
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 'hello' && mode === 'guest' && !playing && !teamMode()) {
       if (msg.fmt && msg.fmt !== '1v1') { joinRoom(msg); return; }
+      gameMap = msg.map ? cleanChoice(msg.map, msg.time) : null;      // play on the host's map
       begin1v1(c);
     }
     if (teamMode()) { onGuestTeamData(msg); return; }
@@ -4035,7 +4124,7 @@ function buildRoster(f) {
   return L;
 }
 const rosterPublic = () => roster.map((r) => ({ side: r.side, pos: r.pos, kind: r.kind, id: r.id, name: r.name, look: r.look || null, level: r.level || null }));
-function sendRoster() { if (mode === 'host') netSend({ t: 'roster', fmt, roster: rosterPublic() }); }
+function sendRoster() { if (mode === 'host') netSend({ t: 'roster', fmt, roster: rosterPublic(), map: mapPick.map, time: mapPick.time }); }
 function setFormat(f) {
   if (mode !== 'host' || playing || f === fmt) return;
   const humans = roster.filter((r) => r.kind === 'human').length;
@@ -4111,7 +4200,8 @@ const sideReady = () => ['left', 'right'].every((sd) => roster.some((r) => r.sid
 function teamStart() {
   if (mode !== 'host' || playing || !sideReady()) return;
   const list = rosterPublic().filter((r) => r.kind !== 'open');
-  netSend({ t: 'start', fmt, roster: list });
+  gameMap = { ...mapPick };
+  netSend({ t: 'start', fmt, roster: list, map: gameMap.map, time: gameMap.time });
   startTeamGame(list);
 }
 function teamFill() {
@@ -4128,7 +4218,6 @@ function startTeamGame(list) {
     else if (mates.length === 2 && fmt === '3v3') { const bk = mates.find((r) => r.pos === 'back') || mates[0]; bk.pos = 'back'; for (const r of mates) if (r !== bk) r.pos = 'front'; }
   }
   setCourtSize(fmt === '3v3' ? 'big' : 'normal');
-  setVenue(fmt === '3v3' ? 'pond' : fmt === '2v2' ? 'terrace' : 'temple');
   const mine = list.find((r) => r.id === myId);
   if (!mine) return;
   startGame(mine.side);
@@ -4247,8 +4336,14 @@ function joinRoom(msg) {
   renderRoom();
 }
 function onGuestTeamData(msg) {
-  if (msg.t === 'roster') { if (!playing) { fmt = msg.fmt; roster = msg.roster || []; renderRoom(); } }
-  else if (msg.t === 'start') { if (!playing) { fmt = msg.fmt; startTeamGame(msg.roster || []); } }
+  if (msg.t === 'roster') {
+    if (!playing) {
+      fmt = msg.fmt; roster = msg.roster || [];
+      if (msg.map) { roomView = cleanChoice(msg.map, msg.time); applyArena(roomView); }     // preview the host's map behind the room
+      renderRoom(); renderPickers();
+    }
+  }
+  else if (msg.t === 'start') { if (!playing) { fmt = msg.fmt; gameMap = msg.map ? cleanChoice(msg.map, msg.time) : null; startTeamGame(msg.roster || []); } }
   else if (msg.t === 's') onTeamState(msg);
   else if (msg.t === 'ping') conn.send({ t: 'pong', ts: msg.ts });
   else if (msg.t === 'pong' && Number.isFinite(msg.ts)) { rtt = rtt * 0.7 + (performance.now() - msg.ts) * 0.3; ui.ping.textContent = `${roomCode} · ${fmt} · ${Math.round(rtt)} ms`; }
@@ -4276,7 +4371,7 @@ function claimLobbySlot(i = 0) {
     c.on('open', () => {
       const filled = roster.filter((r) => r.kind !== 'open').length;
       const open = teamMode() ? !playing && roster.some((r) => r.kind === 'open') : !(conn && conn.open);
-      try { c.send({ t: 'lobby', v: PROTOCOL, code: roomCode, host: myName, open, born: lobbyBorn, fmt, n: filled, cap: roster.length }); } catch {}
+      try { c.send({ t: 'lobby', v: PROTOCOL, code: roomCode, host: myName, open, born: lobbyBorn, fmt, n: filled, cap: roster.length, map: mapPick.map, time: mapPick.time }); } catch {}
       setTimeout(() => { try { c.close(); } catch {} }, 2000);
     });
   });
@@ -4311,7 +4406,7 @@ function refreshLobbies() {
       c.on('data', (msg) => {
         if (msg && msg.t === 'lobby' && msg.v === PROTOCOL && msg.open && /^[A-Z0-9]{4}$/.test(msg.code || '')) {
           found.push({ code: msg.code, host: String(msg.host || 'Player').slice(0, 14), born: Number(msg.born) || 0,
-            fmt: ['1v1', '2v2', '3v3'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2 });
+            fmt: ['1v1', '2v2', '3v3'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2, map: mapById(msg.map).name, time: msg.time === 'day' ? 'Day' : 'Night' });
         }
         end();
       });
@@ -4347,7 +4442,7 @@ function renderLobbies(list) {
     const row = document.createElement('div');
     row.className = 'lobby-row';
     const host = document.createElement('span'); host.className = 'lr-host'; host.textContent = L.host;
-    const code = document.createElement('span'); code.className = 'lr-code'; code.textContent = L.fmt === '1v1' ? L.code : `${L.code} · ${L.fmt} · ${L.n}/${L.cap}`; if (L.fmt !== '1v1') code.classList.add('team');
+    const code = document.createElement('span'); code.className = 'lr-code'; code.textContent = (L.fmt === '1v1' ? `${L.code}` : `${L.code} · ${L.fmt} · ${L.n}/${L.cap}`) + ` · ${L.map} · ${L.time}`; code.classList.add('team');
     const btn = document.createElement('button'); btn.className = 'btn outline lr-join'; btn.textContent = 'Join';
     btn.onclick = () => { ui.code.value = L.code; joinGame(); };
     row.append(host, code, btn);
@@ -4419,7 +4514,8 @@ function teardown() {
   if (others.size) { for (const p of others.values()) p.dispose(); others.clear(); them = null; }
   fmt = '1v1'; roster = []; myId = 'h';
   setCourtSize('normal');
-  setVenue('temple');
+  gameMap = null; roomView = null;
+  applyArena(mapPick);                // the menu shows the map you've picked
   training = false; $('train-panel').classList.add('hidden');
   $('room').classList.add('hidden');
   if (me) { me.dispose(); me = null; }
@@ -4573,11 +4669,58 @@ const params = new URLSearchParams(location.search);
 if (params.get('code')) ui.code.value = params.get('code').toUpperCase().slice(0, 4);
 
 applyQuality(qualityPref === 'auto' ? 'high' : qualityPref);
+/* ---------------- map picker (home screen + room) ---------------- */
+let roomView = null;                  // a guest's view of the host's map choice
+function renderMapPicker(el, choice, editable) {
+  if (!el) return;
+  el.textContent = '';
+  el.classList.toggle('readonly', !editable);
+  const cards = document.createElement('div'); cards.className = 'mp-cards';
+  for (const m of MAPS) {
+    const b = document.createElement('button');
+    b.className = 'mp-card' + (m.id === choice.map ? ' on' : '');
+    b.style.setProperty('--a', m.swatch[0]); b.style.setProperty('--b', m.swatch[1]);
+    const chip = document.createElement('span'); chip.className = 'mp-chip';
+    const nm = document.createElement('span'); nm.className = 'mp-name'; nm.textContent = m.name;
+    b.append(chip, nm);
+    b.title = m.blurb;
+    b.disabled = !editable && m.id !== choice.map;
+    if (editable) b.onclick = () => pickMap({ map: m.id });
+    cards.appendChild(b);
+  }
+  const row = document.createElement('div'); row.className = 'mp-row';
+  for (const [t, label] of [['day', '☀ Day'], ['night', '☾ Night']]) {
+    const b = document.createElement('button'); b.className = 'mp-tod' + (choice.time === t ? ' on' : ''); b.textContent = label;
+    b.disabled = !editable && choice.time !== t;
+    if (editable) b.onclick = () => pickMap({ time: t });
+    row.appendChild(b);
+  }
+  if (editable) {
+    const r = document.createElement('button'); r.className = 'mp-tod rnd'; r.textContent = '🎲 Random';
+    r.onclick = () => pickMap({ map: MAPS[Math.floor(Math.random() * MAPS.length)].id, time: Math.random() < 0.5 ? 'day' : 'night' });
+    row.appendChild(r);
+  }
+  el.append(cards, row);
+}
+function pickMap(ch) {
+  mapPick = cleanChoice(ch.map ?? mapPick.map, ch.time ?? mapPick.time);
+  try { localStorage.setItem('takraw-mappick', JSON.stringify(mapPick)); } catch {}
+  if (!playing) applyArena(mapPick);                     // the menu backdrop previews it
+  renderPickers();
+  if (mode === 'host' && teamMode()) sendRoster();
+}
+function renderPickers() {
+  renderMapPicker(document.getElementById('home-maps'), mapPick, true);
+  const guest = mode === 'guest' && roomView;
+  renderMapPicker(document.getElementById('room-maps'), guest ? roomView : mapPick, !guest);
+}
+applyArena(mapPick);
+renderPickers();
 startLobbyBrowser();
 document.getElementById('lobby-refresh').onclick = () => { const el = document.getElementById('lobby-list'); if (el && !probing) el.innerHTML = '<p class="lobby-empty">Looking for games…</p>'; refreshLobbies(); };
 
 // debug hook for automated testing
-window.__takraw = { get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, pond: () => venues.pond, venues: () => venues, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
+window.__takraw = { get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, time: () => timeOfDay, venues: () => venues, mapPick: () => mapPick, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
   // test helpers: an incoming smash from the other side, and the block effects
   debugSmash: (tx, tz, v = 16) => { const sOpp = -sideSign(me.side); setBall(P.solveSpeed({ x: sOpp * 1.2, y: 2.9, z: 0 }, { x: tx, z: tz }, v)); ballLive = true;
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
@@ -4599,8 +4742,8 @@ function frame() {
   const t0 = performance.now();
   autoQuality(dt);
   if (playing) { updateLocal(dt); updateRemote(dt); updateCPU(dt); updateBall(dt); }
-  if (venues[venue]) venues[venue].update(dt, renderer.getPixelRatio());
   else if (pv.p) updatePreview(dt);
+  { const cv = currentVenue(); if (cv) cv.update(dt, renderer.getPixelRatio()); }
   if (window.__takrawBot) window.__takrawBot(dt);   // test hook (unused in normal play)
   updateCamera(dt);
   const t1 = performance.now();

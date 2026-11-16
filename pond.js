@@ -838,5 +838,12 @@ export function buildPond(ctx) {
     fireflies.material.uniforms.uScale.value = pixelRatio;
   }
 
-  return { g, fx, update };
+  // night: candle boats, fireflies and mist; day: just the pond (phase 2 adds dragonflies)
+  function setTime(tod) {
+    const night = tod !== 'day';
+    for (const cd of candles) cd.g.visible = night;
+    fireflies.visible = night;
+    for (const m of mist) m.m.visible = night;
+  }
+  return { g, fx, update, setTime };
 }

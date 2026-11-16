@@ -11,7 +11,7 @@ function rng(seed) { let s = seed >>> 0 || 1; return () => ((s = (s * 16807) % 2
 const smooth = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
 
 // ---- terrain: a flat platform around the court, terraces stepping DOWN toward the sunset + both ends, UP behind (village) ----
-const PX = 13.6, PZ = 10.2;                 // flat platform half-extents
+let PX = 13.6, PZ = 10.2;                   // flat platform half-extents (set from the court size at build time)
 const PLAT_Y = -0.12;                       // = the court deck's base (F.deckDrop)
 const STEP_W = 3.1, RISER = 0.7;
 function rectDist(x, z) { const dx = Math.max(0, Math.abs(x) - PX), dz = Math.max(0, Math.abs(z) - PZ); return Math.hypot(dx, dz); }
@@ -34,6 +34,7 @@ function heightAt(x, z) {
 
 export function buildTerrace(ctx) {
   const { F, xf, makeBatch, slope, poly, glowTexture, spotLights, quality } = ctx;
+  PX = F.outX + 2.9; PZ = F.outZ + 3.7;
   const g = new THREE.Group();
   g.name = 'hill-terrace';
   const fx = new THREE.Group();
@@ -89,6 +90,8 @@ export function buildTerrace(ctx) {
   }
 
   /* ---------------- mountains: layered ridges all the way round (fog turns the far ones to haze) ---------------- */
+  const ranges = [];
+  let hillMatRef = null;
   {
     const range = (rx, rz, h0, h1, color, seed) => {
       const r = rng(seed), n = 220, pos = [];
@@ -106,7 +109,9 @@ export function buildTerrace(ctx) {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.computeVertexNormals();
-      g.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true, side: THREE.DoubleSide })));
+      const mm = new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true, side: THREE.DoubleSide });
+      ranges.push(mm);
+      g.add(new THREE.Mesh(geo, mm));
     };
     range(118, 105, 14, 34, 0x3e3a4e, 11);
     range(158, 140, 26, 52, 0x5a4766, 23);
@@ -120,6 +125,7 @@ export function buildTerrace(ctx) {
       [0.34, 8.0], [0.36, 8.2], [0.26, 8.7], [0.28, 8.9], [0.17, 9.6], [0.12, 10.6], [0.06, 11.6], [0.02, 12.3], [0, 12.5]]), 12);
     const goldGlow = new THREE.MeshStandardMaterial({ color: 0xe8b65a, metalness: 0.6, roughness: 0.35, emissive: 0x8a5a18 });
     const hillMat = new THREE.MeshStandardMaterial({ color: 0x32452c, roughness: 1, flatShading: true });
+    hillMatRef = hillMat;
     for (const [sx, hz] of [[1, 46], [-1, -44]]) {           // off to the side so it never sits right behind the far baseline
       const hx = sx * 104;
       // a rolling, flat-shaded hill (not a cone): squashed half-sphere with a bit of noise
@@ -168,7 +174,7 @@ export function buildTerrace(ctx) {
   /* ---------------- floodlight poles (bamboo-lashed timber) + paper-lantern festoons ---------------- */
   const POLE = 6.6, poles = [];
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    const px = sx * 12.4, pz = sz * 9.4;
+    const px = sx * (F.outX + 1.7), pz = sz * (F.outZ + 2.9);
     poles.push([px, pz]);
     decor.put(MAT.stone, xf(new THREE.BoxGeometry(0.7, 0.4, 0.7), px, PLAT_Y + 0.2, pz));
     decor.put(MAT.wood, xf(new THREE.CylinderGeometry(0.12, 0.16, POLE, 8), px, PLAT_Y + POLE / 2, pz));
@@ -186,7 +192,7 @@ export function buildTerrace(ctx) {
     const wireMat = new THREE.LineBasicMaterial({ color: 0x140c0a });
     const pts = [];
     for (const sz of [-1, 1]) {
-      const a = new THREE.Vector3(-12.4, PLAT_Y + POLE - 0.1, sz * 9.4), b = new THREE.Vector3(12.4, PLAT_Y + POLE - 0.1, sz * 9.4);
+      const a = new THREE.Vector3(-(F.outX + 1.7), PLAT_Y + POLE - 0.1, sz * (F.outZ + 2.9)), b = new THREE.Vector3(F.outX + 1.7, PLAT_Y + POLE - 0.1, sz * (F.outZ + 2.9));
       const n = 30, line = [];
       for (let i = 0; i <= n; i++) { const t = i / n, p = a.clone().lerp(b, t); p.y -= Math.sin(Math.PI * t) * 1.1; line.push(p); if (i > 0 && i < n) pts.push(p); }
       g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(line), wireMat));
@@ -265,9 +271,9 @@ export function buildTerrace(ctx) {
     g.add(im);
     // bench + water jugs at the side of the court
     for (const sz of [-1]) {
-      decor.put(MAT.wood, xf(new THREE.BoxGeometry(3.2, 0.1, 0.5), 0, PLAT_Y + 0.48, sz * 8.7));
-      for (const x of [-1.4, 1.4]) decor.put(MAT.darkwood, xf(new THREE.BoxGeometry(0.1, 0.48, 0.45), x, PLAT_Y + 0.24, sz * 8.7));
-      for (const x of [-0.6, 0.1, 0.7]) decor.put(MAT.stone, xf(new THREE.SphereGeometry(0.18, 7, 5), x, PLAT_Y + 0.7, sz * 8.7));
+      decor.put(MAT.wood, xf(new THREE.BoxGeometry(3.2, 0.1, 0.5), 0, PLAT_Y + 0.48, sz * (F.outZ + 2.2)));
+      for (const x of [-1.4, 1.4]) decor.put(MAT.darkwood, xf(new THREE.BoxGeometry(0.1, 0.48, 0.45), x, PLAT_Y + 0.24, sz * (F.outZ + 2.2)));
+      for (const x of [-0.6, 0.1, 0.7]) decor.put(MAT.stone, xf(new THREE.SphereGeometry(0.18, 7, 5), x, PLAT_Y + 0.7, sz * (F.outZ + 2.2)));
     }
   }
 
@@ -486,5 +492,12 @@ export function buildTerrace(ctx) {
     }
   }
 
-  return { g, fx, update };
+  const RANGE_COLORS = { day: [0x5f7a6c, 0x8299a0, 0xa4b8c4], night: [0x161a2c, 0x20263e, 0x2a3150] };
+  function setTime(tod) {
+    ranges.forEach((m, i) => m.color.set(RANGE_COLORS[tod === 'day' ? 'day' : 'night'][i]));
+    if (hillMatRef) hillMatRef.color.set(tod === 'day' ? 0x4f6a3e : 0x1c2a1c);
+    for (const fl of flocks) fl.g.visible = tod === 'day';
+    for (const m of mist) m.m.material.opacity = (tod === 'day' ? 0.1 : 0.2);
+  }
+  return { g, fx, update, setTime };
 }
