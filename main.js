@@ -39,7 +39,7 @@ const TEAMS = {
   // colours are relative to the viewer: you are always blue, your opponent always red
   me:  { name: 'me',  jersey: 0x3d8bff, trim: 0xf1f6ff, shorts: 0x15161b, css: '#3d8bff' },
   opp: { name: 'opp', jersey: 0xff3b30, trim: 0xfff1ee, shorts: 0x15161b, css: '#ff3b30' },
-  mate: { name: 'mate', jersey: 0x7db4ff, trim: 0xf1f6ff, shorts: 0x15161b, css: '#7db4ff' },   // your teammate (2v1 / 2v2)
+  mate: { name: 'mate', jersey: 0x7db4ff, trim: 0xf1f6ff, shorts: 0x15161b, css: '#7db4ff' },   // your teammate (2v2 / 3v3)
 };
 const sideSign = (side) => (side === 'left' ? 1 : -1);
 
@@ -525,7 +525,7 @@ function buildBoards() {
   return g;
 }
 let boardsGroup = null;
-// 1v1 / 2v1 / 2v2 play on the normal court; 3v3 gets a bigger one (everything that depends on the size is rebuilt)
+// 1v1 / 2v2 play on the normal court; 3v3 gets a bigger one (everything that depends on the size is rebuilt)
 const COURT_SIZES = { normal: [15.4, 7.0], big: [18.2, 8.6] };
 let courtSize = 'normal';
 function setCourtSize(size) {
@@ -544,7 +544,7 @@ function setCourtSize(size) {
   buildSideGlow();
   landingDirty = true;
 }
-// VENUES: 1v1 / 2v1 / 2v2 play in the temple courtyard; 3v3 plays on the Lotus Pond (built the first time it's needed,
+// VENUES: 1v1 / 2v2 play in the temple courtyard; 3v3 plays on the Lotus Pond (built the first time it's needed,
 // and swapped in whole — none of it is ever visible in the other modes).
 let venue = 'temple', pond = null;
 function setVenue(v) {
@@ -1396,7 +1396,7 @@ window.addEventListener('blur', () => keys.clear());
    Simulation
    ===================================================================== */
 let me = null, them = null, playing = false;
-// ---- teams (2v1 / 2v2). In 1v1 none of this is touched: fmt stays '1v1' and `others` stays empty ----
+// ---- teams (2v2 / 3v3, spots may be left empty). In 1v1 none of this is touched: fmt stays '1v1' and `others` stays empty ----
 let fmt = '1v1';                  // room format chosen by the host
 let roster = [];                  // [{ side, pos: 'front'|'back'|'solo', kind: 'open'|'human'|'cpu', id, name }]
 let myId = 'h';
@@ -3636,7 +3636,8 @@ function cpuThink(p, ai, dt) {
   if (ai.pickAimSoon && match.phase !== 'serve-toss') { ai.pickAimSoon = false; cpuPickAim(p, ai); }
   let tx = -s * 4.2, tz = 0, run = true;          // home spot: middle of my half
   const kl = F.hl / 7.7, kw = F.hw / 3.5;
-  if (teamMode() && p.slot === 'front') { tx = -s * 2.2; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5); }
+  if (teamMode() && p.slot === 'front') { tx = -s * 2.2 * kl; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5) * kw; }
+  else if (teamMode() && p.slot === 'solo') { tx = -s * 4.2 * kl; }
   else if (teamMode() && p.slot === 'back') { tx = -s * 5.6 * kl; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5) * kw; }
   else if (teamMode() && (p.slot === 'fl' || p.slot === 'fr')) {             // 3v3 feeders: each covers their side of the front court
     tx = -s * 2.6 * kl; tz = (p.slot === 'fl' ? -s : s) * 2.2 * kw + ball.z * 0.25;
@@ -4008,7 +4009,7 @@ function wireConnection(c) {
 }
 
 /* =====================================================================
-   TEAM ROOMS (2v1 / 2v2) — the host is the hub: guests talk only to the host, which relays
+   TEAM ROOMS (2v2 / 3v3) — the host is the hub: guests talk only to the host, which relays
    positions and touches to everyone else and runs every CPU. 1v1 rooms never get here.
    ===================================================================== */
 const links = new Map();          // host only: guest peer id → { conn, pos, id }
@@ -4020,7 +4021,6 @@ function netSend(msg, except = null) {
 function buildRoster(f) {
   const slots = f === '3v3' ? [['left', 'back'], ['left', 'fl'], ['left', 'fr'], ['right', 'back'], ['right', 'fl'], ['right', 'fr']]
     : f === '2v2' ? [['left', 'front'], ['left', 'back'], ['right', 'front'], ['right', 'back']]
-    : f === '2v1' ? [['left', 'front'], ['left', 'back'], ['right', 'solo']]
     : [['left', 'solo'], ['right', 'solo']];
   const L = slots.map(([side, pos]) => ({ side, pos, kind: 'open', id: null, name: '' }));
   // keep the people already in the room (host first)
@@ -4036,7 +4036,7 @@ function sendRoster() { if (mode === 'host') netSend({ t: 'roster', fmt, roster:
 function setFormat(f) {
   if (mode !== 'host' || playing || f === fmt) return;
   const humans = roster.filter((r) => r.kind === 'human').length;
-  const cap = f === '3v3' ? 6 : f === '2v2' ? 4 : f === '2v1' ? 3 : 2;
+  const cap = f === '3v3' ? 6 : f === '2v2' ? 4 : 2;
   if (humans > cap || (f === '1v1' && humans > 1)) return;     // can't squeeze people out
   fmt = f;
   roster = buildRoster(f);
@@ -4075,6 +4075,7 @@ function renderRoom() {
   $('room-fmt').classList.toggle('readonly', !host);
   $('room-cols').classList.toggle('hidden', !team);
   $('room-start').classList.toggle('hidden', !(host && team));
+  if (!team) $('room-fill').classList.add('hidden');
   if (!team) { ui.waitStatus.textContent = host ? (peer && peer.open ? 'Waiting for opponent to join…' : ui.waitStatus.textContent) : ui.waitStatus.textContent; return; }
   for (const side of ['left', 'right']) {
     const col = $(`room-${side}`);
@@ -4094,17 +4095,34 @@ function renderRoom() {
     });
   }
   const open = roster.filter((r) => r.kind === 'open').length;
-  $('room-start').textContent = open ? `Start · fill ${open} with CPU` : 'Start';
-  ui.waitStatus.textContent = host ? (open ? 'Share the code — open spots can be friends or CPUs' : 'Everyone’s in') : 'Waiting for the host to start…';
+  const ready = sideReady();
+  $('room-start').textContent = !ready ? 'Need a player on each team' : open ? `Start · ${open} spot${open > 1 ? 's' : ''} empty` : 'Start';
+  $('room-start').disabled = !ready;
+  $('room-fill').classList.toggle('hidden', !(host && open));
+  $('room-fill').textContent = `Fill ${open} empty with CPU`;
+  ui.waitStatus.textContent = host ? (open ? 'Open spots: a friend can join, add a CPU, or leave it empty' : 'Everyone’s in') : 'Waiting for the host to start…';
 }
+const sideReady = () => ['left', 'right'].every((sd) => roster.some((r) => r.side === sd && r.kind !== 'open'));
+// open spots you don't fill just stay EMPTY (e.g. 2v2 with one spot empty = 2 vs 1)
 function teamStart() {
+  if (mode !== 'host' || playing || !sideReady()) return;
+  const list = rosterPublic().filter((r) => r.kind !== 'open');
+  netSend({ t: 'start', fmt, roster: list });
+  startTeamGame(list);
+}
+function teamFill() {
   if (mode !== 'host' || playing) return;
   for (const r of roster) if (r.kind === 'open') Object.assign(r, { kind: 'cpu', id: 'c' + (++cpuSeq), name: `CPU · ${LEVEL_NAMES[cpuLevel]}`, level: cpuLevel, look: randomLook() });
-  netSend({ t: 'start', fmt, roster: rosterPublic() });
-  startTeamGame(rosterPublic());
+  sendRoster(); renderRoom();
 }
 function startTeamGame(list) {
   roster = list;
+  // short-handed teams (spots left empty): re-assign positions so the side is still covered
+  for (const sd of ['left', 'right']) {
+    const mates = list.filter((r) => r.side === sd);
+    if (mates.length === 1) mates[0].pos = 'solo';
+    else if (mates.length === 2 && fmt === '3v3') { const bk = mates.find((r) => r.pos === 'back') || mates[0]; bk.pos = 'back'; for (const r of mates) if (r !== bk) r.pos = 'front'; }
+  }
   setCourtSize(fmt === '3v3' ? 'big' : 'normal');
   setVenue(fmt === '3v3' ? 'pond' : 'temple');
   const mine = list.find((r) => r.id === myId);
@@ -4289,7 +4307,7 @@ function refreshLobbies() {
       c.on('data', (msg) => {
         if (msg && msg.t === 'lobby' && msg.v === PROTOCOL && msg.open && /^[A-Z0-9]{4}$/.test(msg.code || '')) {
           found.push({ code: msg.code, host: String(msg.host || 'Player').slice(0, 14), born: Number(msg.born) || 0,
-            fmt: ['1v1', '2v1', '2v2', '3v3'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2 });
+            fmt: ['1v1', '2v2', '3v3'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2 });
         }
         end();
       });
@@ -4515,6 +4533,7 @@ for (const b of document.querySelectorAll('.cpu-lvl')) {
 $('cancel-btn').onclick = () => { teardown(); showScreen('home'); };
 for (const b of document.querySelectorAll('.room-fmt button')) b.onclick = () => setFormat(b.dataset.fmt);
 $('room-start').onclick = teamStart;
+$('room-fill').onclick = teamFill;
 $('leave-btn').onclick = () => { teardown(); showScreen('home'); };
 $('go-leave').onclick = () => { teardown(); showScreen('home'); };
 $('rematch-btn').onclick = () => { if (isAuthority()) resetMatch(); };

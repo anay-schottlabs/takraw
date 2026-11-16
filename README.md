@@ -28,6 +28,6 @@ WASD move · Space jump · J set / dig (tap on green) · K kick / spike (tap on 
 - A J on your third touch is an emergency save that goes over the net — it can never cause a fourth touch.
 
 ## Modes
-- **Create / Join** — online rooms (peer-to-peer): **1v1, 2v1, 2v2 or 3v3** (3v3 plays on its own venue: a bigger court on a teak deck in a lotus pond, with koi, bridges to two salas, candle boats and fireflies). The host picks the format; empty spots can be friends or CPUs ("+ CPU", or Start fills them). Teams share 3 touches; the serve rotates through teammates. If someone drops mid-match a CPU takes their spot. Open games are listed on the menu with format and fill (e.g. `2v2 · 2/4`).
+- **Create / Join** — online rooms (peer-to-peer): **1v1, 2v2 or 3v3** (spots can be friends, CPUs, or left empty — e.g. 2v2 with an empty spot plays 2 vs 1) (3v3 plays on its own venue: a bigger court on a teak deck in a lotus pond, with koi, bridges to two salas, candle boats and fireflies). The host picks the format; empty spots can be friends or CPUs ("+ CPU", or Start fills them). Teams share 3 touches; the serve rotates through teammates. If someone drops mid-match a CPU takes their spot. Open games are listed on the menu with format and fill (e.g. `2v2 · 2/4`).
 - **Play vs CPU** — full match against a computer opponent (Easy / Normal / Hard). It reads the ball, controls, sets, spikes, digs and serves.
 - **Practice** — ball machine (F) and serving practice (J).
