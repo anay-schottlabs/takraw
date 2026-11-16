@@ -84,7 +84,7 @@ export function buildJungle(ctx) {
         const m = new THREE.Mesh(new THREE.PlaneGeometry(w, top - bottom), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, opacity: k ? 0.6 : 0.85, side: THREE.DoubleSide }));
         m.position.set(x + k * 0.3, (top + bottom) / 2, z - k * 0.15); m.renderOrder = 4;
         g.add(m);
-        falls.push({ t, speed: k ? 1.1 : 1.6 });
+        falls.push({ t, speed: k ? 1.1 : 1.6, m: m.material });
       }
     }
   }
@@ -235,6 +235,7 @@ export function buildJungle(ctx) {
   function setTime(tod) {
     const night = tod !== 'day';
     dayLife.visible = !night; nightLife.visible = night;
+    for (const f of falls) f.m.color.setScalar(night ? 0.45 : 1);       // moonlit water, not glowing water
   }
   return { g, fx, update, setTime, fog: { day: [40, 220], night: [26, 140] } };
 }

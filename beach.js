@@ -288,6 +288,11 @@ export function buildBeach(ctx) {
     }
     if (night.visible) for (const d of dancers) d.spin.rotation.z = time * 9 + d.ph;
   }
-  function setTime(tod) { night.visible = tod !== 'day'; }
+  function setTime(tod) {
+    night.visible = tod !== 'day';
+    const k = tod === 'day' ? 1 : 0.32;                         // moonlit foam, not glowing foam
+    for (const fo of foams) fo.f.material.color.setScalar(k);
+    for (const cr of crests) cr.m.material.color.setScalar(k);
+  }
   return { g, fx, update, setTime, fog: { day: [90, 700], night: [60, 380] } };
 }
