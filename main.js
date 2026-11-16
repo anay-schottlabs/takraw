@@ -7,6 +7,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import * as P from './physics.js';
 import { sfx } from './sfx.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { buildPond } from './pond.js';
 
 /* =====================================================================
    FIELD SPEC — ISTAF sepak takraw court (metres)
@@ -116,6 +117,7 @@ function applyQuality(level) {
     if (key.shadow.map) { key.shadow.map.dispose(); key.shadow.map = null; }
   }
   for (const sp of spotLights) sp.visible = q.spots;
+  if (pond) pond.fx.visible = level !== 'low';   // fireflies, mist, candle boats, ripples
   if (prevShadow !== renderer.shadowMap.enabled) {
     scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
   }
@@ -538,8 +540,25 @@ function setCourtSize(size) {
   AIM_COLS0.forEach((v, i) => { AIM_COLS[i] = v * kw; });
   scene.remove(courtGroup); courtGroup = buildCourt(); scene.add(courtGroup);
   scene.remove(boardsGroup); boardsGroup = buildBoards(); scene.add(boardsGroup);
+  boardsGroup.visible = venue === 'temple';
   buildSideGlow();
   landingDirty = true;
+}
+// VENUES: 1v1 / 2v1 / 2v2 play in the temple courtyard; 3v3 plays on the Lotus Pond (built the first time it's needed,
+// and swapped in whole — none of it is ever visible in the other modes).
+let venue = 'temple', pond = null;
+function setVenue(v) {
+  if (v === venue) return;
+  venue = v;
+  if (v === 'pond' && !pond) {
+    pond = buildPond({ F, xf, makeBatch, slope, poly, texLoader, glowTexture, ornamentTexture, panelTexture, spotLights,
+      quality: () => QUALITY[qualityLevel] || QUALITY.medium });
+    pond.fx.visible = qualityLevel !== 'low';
+    scene.add(pond.g);
+  }
+  templeGroup.visible = v === 'temple';
+  boardsGroup.visible = v === 'temple';
+  if (pond) pond.g.visible = v === 'pond';
 }
 
 
@@ -944,7 +963,8 @@ function buildSurroundings() {
   g.traverse((o) => { o.matrixAutoUpdate = false; });
   return g;
 }
-scene.add(buildSurroundings());
+const templeGroup = buildSurroundings();
+scene.add(templeGroup);
 boardsGroup = buildBoards();
 scene.add(boardsGroup);
 
@@ -4086,6 +4106,7 @@ function teamStart() {
 function startTeamGame(list) {
   roster = list;
   setCourtSize(fmt === '3v3' ? 'big' : 'normal');
+  setVenue(fmt === '3v3' ? 'pond' : 'temple');
   const mine = list.find((r) => r.id === myId);
   if (!mine) return;
   startGame(mine.side);
@@ -4376,6 +4397,7 @@ function teardown() {
   if (others.size) { for (const p of others.values()) p.dispose(); others.clear(); them = null; }
   fmt = '1v1'; roster = []; myId = 'h';
   setCourtSize('normal');
+  setVenue('temple');
   training = false; $('train-panel').classList.add('hidden');
   $('room').classList.add('hidden');
   if (me) { me.dispose(); me = null; }
@@ -4532,7 +4554,7 @@ startLobbyBrowser();
 document.getElementById('lobby-refresh').onclick = () => { const el = document.getElementById('lobby-list'); if (el && !probing) el.innerHTML = '<p class="lobby-empty">Looking for games…</p>'; refreshLobbies(); };
 
 // debug hook for automated testing
-window.__takraw = { get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
+window.__takraw = { get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, pond: () => pond, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
   // test helpers: an incoming smash from the other side, and the block effects
   debugSmash: (tx, tz, v = 16) => { const sOpp = -sideSign(me.side); setBall(P.solveSpeed({ x: sOpp * 1.2, y: 2.9, z: 0 }, { x: tx, z: tz }, v)); ballLive = true;
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
@@ -4554,6 +4576,7 @@ function frame() {
   const t0 = performance.now();
   autoQuality(dt);
   if (playing) { updateLocal(dt); updateRemote(dt); updateCPU(dt); updateBall(dt); }
+  if (pond && venue === 'pond') pond.update(dt, renderer.getPixelRatio());
   else if (pv.p) updatePreview(dt);
   if (window.__takrawBot) window.__takrawBot(dt);   // test hook (unused in normal play)
   updateCamera(dt);
