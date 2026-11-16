@@ -119,14 +119,24 @@ export function makeFlyers(homes, kind = 'dragonfly') {
   return { g, update };
 }
 
-/** A simple low-poly standing person, merged into one geometry per material: robe/body + head (+ optional conical hat). */
-export function personGeometry({ hat = false } = {}) {
-  const robe = new THREE.CylinderGeometry(0.16, 0.3, 1.3, 7); robe.translate(0, 0.65, 0);
-  const shoulders = new THREE.SphereGeometry(0.18, 7, 5); shoulders.scale(1.1, 0.6, 0.8); shoulders.translate(0, 1.32, 0);
-  const head = new THREE.SphereGeometry(0.12, 8, 6); head.translate(0, 1.55, 0.01);
-  const body = mergeGeometries([nonIdx(robe), nonIdx(shoulders)]);
+/** A simple low-poly standing person, merged into one geometry per part: `body` (legs + torso + arms, one colour),
+ *  `head`, and optionally a conical `hat`. `robe: true` gives a monk's robe silhouette instead of legs. */
+export function personGeometry({ hat = false, robe = false } = {}) {
+  const P = [];
+  if (robe) {
+    const r = new THREE.CylinderGeometry(0.16, 0.3, 1.3, 7); r.translate(0, 0.65, 0); P.push(nonIdx(r));
+    const s = new THREE.SphereGeometry(0.18, 7, 5); s.scale(1.1, 0.6, 0.8); s.translate(0, 1.32, 0); P.push(nonIdx(s));
+  } else {
+    for (const sx of [-1, 1]) { const leg = new THREE.CylinderGeometry(0.075, 0.06, 0.82, 6); leg.translate(sx * 0.09, 0.41, 0); P.push(nonIdx(leg)); }
+    const hip = new THREE.BoxGeometry(0.3, 0.16, 0.18); hip.translate(0, 0.86, 0); P.push(nonIdx(hip));
+    const torso = new THREE.CylinderGeometry(0.17, 0.14, 0.56, 7); torso.scale(1, 1, 0.72); torso.translate(0, 1.18, 0); P.push(nonIdx(torso));
+    const sh = new THREE.SphereGeometry(0.17, 7, 5); sh.scale(1.25, 0.5, 0.75); sh.translate(0, 1.42, 0); P.push(nonIdx(sh));
+    for (const sx of [-1, 1]) { const arm = new THREE.CylinderGeometry(0.05, 0.045, 0.6, 5); arm.rotateZ(sx * 0.12); arm.translate(sx * 0.24, 1.13, 0); P.push(nonIdx(arm)); }
+  }
+  const body = mergeGeometries(P);
+  const head = new THREE.SphereGeometry(0.11, 8, 6); head.scale(0.95, 1.08, 1); head.translate(0, 1.58, 0.01);
   const parts = { body, head: nonIdx(head) };
-  if (hat) { const h = new THREE.ConeGeometry(0.36, 0.2, 10); h.translate(0, 1.7, 0); parts.hat = nonIdx(h); }
+  if (hat) { const h = new THREE.ConeGeometry(0.36, 0.2, 10); h.translate(0, 1.73, 0); parts.hat = nonIdx(h); }
   return parts;
 }
 

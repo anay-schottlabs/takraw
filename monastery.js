@@ -150,7 +150,7 @@ export function buildMonastery(ctx) {
 
   /* ---------------- monks on the terrace ---------------- */
   {
-    const pg = personGeometry();
+    const pg = personGeometry({ robe: true });
     const parts = [];
     for (const [x, z, r] of [[-TX + 3, TZ - 2.4, 0.4], [TX - 3.5, TZ - 2.2, -0.3], [-TX + 2.5, -TZ + 2.6, 2.8], [6, TZ + 2.2, 3.1], [-5, TZ + 2.6, 2.9]]) {
       for (const [geo, col] of [[pg.body, 0xe07a1a], [pg.head, 0x9c6b47]]) { const gg = geo.clone(); gg.rotateY(r); gg.translate(x, -0.12, z); parts.push(paint(gg, col)); }

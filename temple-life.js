@@ -27,7 +27,7 @@ export function buildTempleLife(ctx) {
   day.add(flock.g);
 
   // monks sweeping near each hall's steps
-  const monkParts = personGeometry();
+  const monkParts = personGeometry({ robe: true });
   const robe = new THREE.MeshStandardMaterial({ color: 0xe07a1a, roughness: 0.8, flatShading: true });
   const skin = new THREE.MeshStandardMaterial({ color: 0x9c6b47, roughness: 0.6 });
   const broomGeo = mergeGeometries([

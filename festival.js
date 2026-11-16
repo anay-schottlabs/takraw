@@ -120,8 +120,8 @@ export function buildFestival(ctx) {
     const pg = personGeometry();
     const parts = [];
     const shirts = [0xf2f2f2, 0xd83a2a, 0x1f6fd8, 0xe8b82a, 0x2fa04a, 0x8a2a8a, 0x2a2a2a, 0xff8ac0];
-    for (let i = 0; i < 150; i++) {
-      const s = i % 2 ? 1 : -1, x = (R() * 2 - 1) * 60, z = s * (F.outZ + 2.4 + R() * 3.4);
+    for (let i = 0; i < 300; i++) {
+      const s = i % 2 ? 1 : -1, x = (R() * 2 - 1) * 62, z = s * (F.outZ + 2.0 + R() * 5.2);
       if (Math.abs(x) < F.outX + 1.5 && Math.abs(z) < F.outZ + 2.6) continue;
       const sc = 0.88 + R() * 0.2, ry = R() * Math.PI * 2;
       for (const [geo, col] of [[pg.body, shirts[Math.floor(R() * shirts.length)]], [pg.head, [0x8a5a3a, 0xc99a72, 0x6b4a30][Math.floor(R() * 3)]]]) {
