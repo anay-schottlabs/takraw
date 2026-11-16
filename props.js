@@ -225,3 +225,96 @@ export function boundaryRail(F, put, { postMat, railMat, panelMat = null, H = 0.
     }
   }
 }
+
+/** Bamboo fence on the ball boundary: woven kick panel, two bamboo rails, posts with nodes (same look as the terrace). */
+export function bambooFence(F, put, { light = 0xc8a85e, dark = 0x8f7438 } = {}) {
+  const BH = 0.8;
+  const wovenTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const x = c.getContext('2d');
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+      x.fillStyle = (i + j) % 2 ? '#b8954e' : '#9a7a3c'; x.fillRect(i * 8, j * 8, 8, 8);
+      x.fillStyle = 'rgba(0,0,0,0.12)'; x.fillRect(i * 8, j * 8 + ((i + j) % 2 ? 0 : 6), 8, 2);
+    }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.NearestFilter;
+    return t;
+  })();
+  const woven = new THREE.MeshStandardMaterial({ map: wovenTex, roughness: 0.85 });
+  const rail = new THREE.MeshStandardMaterial({ color: light, roughness: 0.6 });
+  const post = new THREE.MeshStandardMaterial({ color: dark, roughness: 0.7 });
+  const bx = F.outX + 0.06, bz = F.outZ + 0.06;
+  for (const [len, x, z, ry] of [[F.outX * 2 + 0.12, 0, -bz, 0], [F.outX * 2 + 0.12, 0, bz, Math.PI], [F.outZ * 2, -bx, 0, Math.PI / 2], [F.outZ * 2, bx, 0, -Math.PI / 2]]) {
+    const pg = new THREE.BoxGeometry(len, 0.44, 0.05);
+    const u = pg.attributes.uv;
+    for (let i = 0; i < u.count; i++) u.setXY(i, u.getX(i) * len * 1.6, u.getY(i) * 0.44 * 1.6);
+    put(woven, pg, x, 0.22, z, ry);
+    for (const y of [0.5, BH - 0.04]) put(rail, new THREE.CylinderGeometry(0.045, 0.045, len, 7), x, y, z, ry, 0, Math.PI / 2);
+    const n = Math.round(len / 1.5);
+    for (let i = 0; i <= n; i++) {
+      const t = -len / 2 + (i / n) * len, px = x + Math.cos(ry) * t, pz = z - Math.sin(ry) * t;
+      put(post, new THREE.CylinderGeometry(0.06, 0.065, BH + 0.12, 7), px, (BH + 0.12) / 2, pz);
+      put(post, new THREE.CylinderGeometry(0.07, 0.07, 0.03, 7), px, BH * 0.55, pz);
+    }
+  }
+}
+
+/** Instanced, swaying low-poly palm trees at `spots` ([[x,y,z,scale,rotY,lean],…]). */
+export function palms(spots, uTime, { trunk = 0x7a6248, frond = 0x3f7a3a } = {}) {
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const tr = [], fr = [];
+  let p = V(0, 0, 0);
+  for (let i = 0; i < 7; i++) {
+    const q = V(Math.sin(i * 0.28) * 0.9, (i + 1) * 1.2, 0), d = q.clone().sub(p);
+    const c = new THREE.CylinderGeometry(0.19 - i * 0.012, 0.2 - i * 0.012, d.length(), 6);
+    c.translate(0, d.length() / 2, 0); c.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), d.normalize())); c.translate(p.x, p.y, p.z);
+    tr.push(c.toNonIndexed()); p = q;
+  }
+  for (let i = 0; i < 9; i++) {
+    const f = new THREE.PlaneGeometry(0.6, 3.0, 1, 6);
+    const pa = f.attributes.position;
+    for (let k = 0; k < pa.count; k++) { const y = pa.getY(k) + 1.5; pa.setXYZ(k, pa.getX(k) * (1 - y / 3.4), -0.13 * y * y + 0.1 * y, y); }
+    f.computeVertexNormals(); f.rotateY((i / 9) * Math.PI * 2); f.translate(p.x, p.y, p.z);
+    fr.push(f.toNonIndexed());
+  }
+  for (const a of [...tr, ...fr]) a.deleteAttribute('uv');
+  const sway = (m, k) => {
+    m.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = uTime;
+      sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+        `#include <begin_vertex>
+         float ph = instanceMatrix[3].x * 0.37 + instanceMatrix[3].z * 0.23;
+         transformed.x += sin(uTime * 0.9 + ph) * ${k} * position.y * position.y;
+         transformed.z += cos(uTime * 0.7 + ph) * ${k} * 0.6 * position.y * position.y;`);
+    };
+    return m;
+  };
+  const g = new THREE.Group();
+  const o = new THREE.Object3D();
+  for (const [geo, mat] of [[mergeGeometries(tr), sway(new THREE.MeshStandardMaterial({ color: trunk, roughness: 0.9, flatShading: true }), '0.0016')],
+    [mergeGeometries(fr), sway(new THREE.MeshStandardMaterial({ color: frond, roughness: 0.8, side: THREE.DoubleSide, flatShading: true }), '0.0016')]]) {
+    const im = new THREE.InstancedMesh(geo, mat, spots.length);
+    spots.forEach(([x, y, z, s, r, lean = 0], i) => { o.position.set(x, y, z); o.rotation.set(0, r, lean); o.scale.setScalar(s); o.updateMatrix(); im.setMatrixAt(i, o.matrix); });
+    im.computeBoundingSphere();
+    g.add(im);
+  }
+  return g;
+}
+
+/** Leafy low-poly tree clumps (instanced): trunk + 4 icosahedron blobs. */
+export function treeClumps(spots, { leaf = 0x2f4a2a, bark = 0x5a4a3c, scaleY = 1 } = {}) {
+  const blobs = [];
+  for (const [x, y, z, r] of [[0, 2.6, 0, 1.3], [0.9, 2.2, 0.4, 0.95], [-0.8, 2.3, -0.3, 1.0], [0.1, 3.4, -0.2, 0.85]]) { const b = new THREE.IcosahedronGeometry(r, 0); b.translate(x, y * scaleY, z); blobs.push(b); }
+  const geo = mergeGeometries(blobs);
+  const trunk = new THREE.CylinderGeometry(0.14, 0.2, 2 * scaleY, 6); trunk.translate(0, scaleY, 0);
+  const g = new THREE.Group(), o = new THREE.Object3D(), c = new THREE.Color();
+  const im = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true }), spots.length);
+  const it = new THREE.InstancedMesh(trunk, new THREE.MeshStandardMaterial({ color: bark, roughness: 0.9 }), spots.length);
+  spots.forEach(([x, y, z, s, r], i) => {
+    o.position.set(x, y, z); o.rotation.set(0, r, 0); o.scale.setScalar(s); o.updateMatrix();
+    im.setMatrixAt(i, o.matrix); it.setMatrixAt(i, o.matrix);
+    im.setColorAt(i, c.set(leaf).offsetHSL((Math.sin(i * 12.9898) * 0.5) * 0.04, 0, (Math.sin(i * 78.233) * 0.5) * 0.12));
+  });
+  im.computeBoundingSphere(); it.computeBoundingSphere();
+  g.add(im, it);
+  return g;
+}
