@@ -17,6 +17,9 @@ import { buildMarket } from './market.js';
 import { buildBeach } from './beach.js';
 import { buildJungle } from './jungle.js';
 import { buildBamboo } from './bamboo.js';
+import { buildFestival } from './festival.js';
+import { buildPalace } from './palace.js';
+import { buildMonastery } from './monastery.js';
 
 /* =====================================================================
    FIELD SPEC — ISTAF sepak takraw court (metres)
@@ -613,7 +616,7 @@ function setCourtSize(size) {
 // court size (3v3 gets the bigger version), cached, and swapped in whole — nothing from one map is visible on another.
 let venue = 'temple';                 // map id on screen
 const venues = {};                    // `${id}:${size}` → { g, fx, update, setTime? }
-const VENUE_BUILDERS = { temple: buildTempleLife, pond: buildPond, terrace: buildTerrace, riverside: buildRiverside, rooftop: buildRooftop, market: buildMarket, beach: buildBeach, jungle: buildJungle, bamboo: buildBamboo };   // (the temple's buildings live in main.js; this adds its life)
+const VENUE_BUILDERS = { temple: buildTempleLife, pond: buildPond, terrace: buildTerrace, riverside: buildRiverside, rooftop: buildRooftop, market: buildMarket, beach: buildBeach, jungle: buildJungle, bamboo: buildBamboo, festival: buildFestival, palace: buildPalace, monastery: buildMonastery };   // (the temple's buildings live in main.js; this adds its life)
 const venueKey = (id) => `${id}:${courtSize}`;
 function setVenue(id) {
   if (!VENUE_BUILDERS[id]) id = 'temple';
@@ -631,6 +634,22 @@ function setVenue(id) {
   boardsGroup.visible = id === 'temple';
   for (const [key, vn] of Object.entries(venues)) vn.g.visible = key === k;
   applyFog();
+  // keep only the few most recently used maps in memory (browsing all twelve shouldn't fill the GPU)
+  venueLRU.splice(venueLRU.indexOf(k) >>> 0, venueLRU.includes(k) ? 1 : 0);
+  venueLRU.push(k);
+  while (venueLRU.length > 4) disposeVenue(venueLRU.shift());
+}
+const venueLRU = [];
+function disposeVenue(key) {
+  const vn = venues[key];
+  if (!vn || key === venueKey(venue)) return;
+  delete venues[key];
+  scene.remove(vn.g);
+  vn.g.traverse((o) => {
+    if (o.isSpotLight) { const i = spotLights.indexOf(o); if (i >= 0) spotLights.splice(i, 1); }
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) for (const mt of [].concat(o.material)) { for (const v of Object.values(mt)) if (v && v.isTexture && v !== glowTexture()) v.dispose(); mt.dispose(); }
+  });
 }
 const currentVenue = () => venues[venueKey(venue)] || null;
 // a map can ask for its own fog distances (e.g. the rooftop wants to see the far skyline)

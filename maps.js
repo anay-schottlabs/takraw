@@ -9,6 +9,9 @@ export const MAPS = [
   { id: 'beach', name: 'Karst Beach', blurb: 'A sand court on an Andaman beach — karst towers, long-tails, fire dancers at night', swatch: ['#1f7f8f', '#ead6a2'] },
   { id: 'jungle', name: 'Jungle Waterfall', blurb: 'A rainforest clearing by a tiered waterfall — hornbills, vines, fireflies', swatch: ['#2f5a26', '#bfe8f0'] },
   { id: 'bamboo', name: 'Bamboo Forest', blurb: 'A clearing in a towering bamboo grove — light shafts, lanterns, a shrine', swatch: ['#8fa83f', '#ffd27a'] },
+  { id: 'festival', name: 'Lantern Festival', blurb: 'Yi Peng night — sky lanterns rising, khom lantern canopies, drums', swatch: ['#2a1a3a', '#ffa04a'] },
+  { id: 'palace', name: 'Palace Garden', blurb: 'Gilded pavilions, reflecting pools, topiary and guardian giants', swatch: ['#1f4a6a', '#e8b85a'] },
+  { id: 'monastery', name: 'Cloud Monastery', blurb: 'A summit monastery above a sea of clouds — golden chedi, naga stairs', swatch: ['#8aa0c0', '#f2f4f8'] },
   { id: 'terrace', name: 'Hill Tribe Terrace', blurb: 'Rice terraces, a stilt village and misty mountains', swatch: ['#86a63c', '#f2c12e'] },
 ];
 export const mapById = (id) => MAPS.find((m) => m.id === id) || MAPS[0];

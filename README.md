@@ -38,7 +38,9 @@ Pick a map (and **Day** or **Night**) on the menu or in your room — the menu b
 - **Karst Beach** — a sand court on an Andaman beach: karst towers out at sea, long-tails, tiki torches + fire dancers at night
 - **Jungle Waterfall** — a rainforest clearing by twin waterfalls: giant trees, vines, hornbills by day, fireflies + glowing mushrooms at night
 - **Bamboo Forest** — a clearing in a towering, swaying grove: light shafts by day, paper lanterns + moonbeams at night
-- More on the way: Lantern Festival, Palace Garden, Cloud Monastery
+- **Lantern Festival** — Yi Peng: tents, bunting, drums, khom lantern canopies; hundreds of sky lanterns rising at night, kites by day
+- **Palace Garden** — gilded multi-tiered pavilions, guardian giants, reflecting pools + fountains, topiary, golden chedis (inspired by the style, not a replica)
+- **Cloud Monastery** — a summit terrace above a sea of clouds: a great golden chedi, naga-serpent stairs, rows of prayer bells
 
 ## Modes
 - **Create / Join** — online rooms (peer-to-peer): **1v1, 2v2 or 3v3** (spots can be friends, CPUs, or left empty — e.g. 2v2 with an empty spot plays 2 vs 1) — 3v3 plays a bigger version of the court. The host picks the format; empty spots can be friends or CPUs ("+ CPU", or Start fills them). Teams share 3 touches; the serve rotates through teammates. If someone drops mid-match a CPU takes their spot. Open games are listed on the menu with format and fill (e.g. `2v2 · 2/4`).
