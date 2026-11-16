@@ -2087,6 +2087,11 @@ const BLOCK_X = 0.85;                     // body centre this close to the net t
 const BLOCK_PERFECT = 0.05 * BALL_TIME;   // ±50 ms (real time) around the ball crossing over you
 const BLOCK_GOOD = 0.1 * BALL_TIME;       // ±100 ms
 const BLOCK_CD = 0.7;                     // recovery between block attempts (s) — no spamming
+// SHORT vs DEEP attacks: a smash aimed near the net crosses right over a blocker, so the block gets much easier
+// the shorter it is (deep smashes stay a dig). 0 = deep (≥ 4.5 m past the net) … 1 = short (≤ 1.5 m).
+const shortK = (landX) => THREE.MathUtils.clamp((4.5 - Math.abs(landX)) / 3, 0, 1);
+const blockWin = (k) => ({ perfect: BLOCK_PERFECT * (1 + 1.5 * k), good: BLOCK_GOOD * (1 + 1.5 * k), reachZ: 0.8 + 0.5 * k, low: 0.45 - 0.5 * k });   // short ones cross low: legs can wall them too
+function attackLandX() { const r = P.simulate(ball, 3); return r.end ? r.end.x : 9; }
 let myTele = null;                        // my attack's aim spot while I'm jumping into it (sent to the opponent)
 let blockCd = 0, blockPress = -1e9, pendingCross = null, hitStop = 0;
 const smashWarn = { on: false, inPos: false, announced: false };
@@ -2248,19 +2253,20 @@ function tryBlock() {
     const late = simTime - pendingCross.t;
     const c = pendingCross;
     pendingCross = null;
-    if (late <= BLOCK_GOOD && c.geomOk) resolveBlock(c, late);
+    if (late <= c.win.good && c.geomOk) resolveBlock(c, late);
     else missBlock('LATE');
   }
 }
-function blockGeomOk(c) {
-  return me.y > 0.12 && Math.abs(me.pos.x) <= BLOCK_X && Math.abs(me.pos.z - c.z) <= 0.8 && c.y >= me.y + 0.45 && c.y <= me.y + 2.5;
+function blockGeomOk(c, win, p = me) {
+  return p.y > 0.12 && Math.abs(p.pos.x) <= BLOCK_X && Math.abs(p.pos.z - c.z) <= win.reachZ && c.y >= p.y + win.low && c.y <= p.y + 2.5;
 }
 // called when their attack crosses the net toward me
 function onAttackCross(e) {
-  const c = { x: e.x, y: e.y, z: e.z, t: simTime, geomOk: blockGeomOk(e) };
+  const win = blockWin(shortK(attackLandX()));
+  const c = { x: e.x, y: e.y, z: e.z, t: simTime, win, geomOk: blockGeomOk(e, win) };
   const early = c.t - blockPress;                       // pressed this long before the crossing
-  if (early >= 0 && early <= BLOCK_GOOD && c.geomOk) { resolveBlock(c, -early); return; }
-  if (early >= 0 && early <= 0.5) { missBlock(early > BLOCK_GOOD ? 'EARLY' : 'MISSED'); return; }
+  if (early >= 0 && early <= win.good && c.geomOk) { resolveBlock(c, -early); return; }
+  if (early >= 0 && early <= 0.5) { missBlock(early > win.good ? 'EARLY' : 'MISSED'); return; }
   pendingCross = c.geomOk ? c : null;
 }
 function missBlock(kind) {
@@ -2271,7 +2277,7 @@ function missBlock(kind) {
 }
 function resolveBlock(c, dt) {
   pendingCross = null; blockPress = -1e9;
-  const perfect = Math.abs(dt) <= BLOCK_PERFECT;
+  const perfect = Math.abs(dt) <= (c.win ? c.win.perfect : BLOCK_PERFECT);
   const s = sideSign(me.side);                          // their half is on the +s side of the net
   const from = { x: s * 0.12, y: Math.max(c.y, P.netTop(c.z) + 0.15), z: c.z };
   const zIn = (z) => THREE.MathUtils.clamp(z, -(F.hw - 0.4), F.hw - 0.4);
@@ -2777,6 +2783,10 @@ function handleEvent(e) {
     renderMatchUI();
     // their attack just went over the net toward me: was there a block on it?
     if (me && isAttack(match.lastPart) && match.last && match.last !== me.side && P.sideOfX(ball.x) === me.side) onAttackCross(e);
+    if (isAttack(match.lastPart) && (mode === 'cpu' || (teamMode() && mode === 'host'))) {
+      const blockers = teamMode() ? [...others.values()].filter((q) => q.kind === 'cpu') : [them].filter(Boolean);
+      for (const q of blockers) if (q.side === P.sideOfX(ball.x) && match.last !== q.side && cpuTryBlock(q, e)) break;
+    }
     return;
   }
   if (e.type === 'net') {
@@ -2945,7 +2955,7 @@ function updateBall(dt) {
   touchCd = Math.max(0, touchCd - dt * BALL_TIME);
   recoverT = Math.max(0, recoverT - dt);
   blockCd = Math.max(0, blockCd - dt);
-  if (pendingCross && simTime - pendingCross.t > BLOCK_GOOD) pendingCross = null;
+  if (pendingCross && simTime - pendingCross.t > pendingCross.win.good) pendingCross = null;
 
   // inputs
   if (jQ) {
@@ -3297,11 +3307,14 @@ function updateHint() {
   if (!me) return;
   let h = '';
   const atNet = Math.abs(me.pos.x) <= BLOCK_X + 0.3;
-  if (smashWarn.on) h = smashWarn.inPos ? 'In position  ·  J on GREEN to dig' : atNet && !smashIncoming() ? 'L  block as it crosses  ·  or get to the ring' : 'Smash incoming  ·  get to the ring';
+  const spot = (them && them.tele) || (smashIncoming() ? landingCache : null);
+  const shortSmash = smashWarn.on && spot && shortK(spot.x) > 0.5;
+  if (shortSmash) h = atNet ? 'SHORT smash  ·  L  block it as it crosses the net' : 'SHORT smash  ·  get to the NET and block (L)';
+  else if (smashWarn.on) h = smashWarn.inPos ? 'In position  ·  J on GREEN to dig' : atNet && !smashIncoming() ? 'L  block as it crosses  ·  or get to the ring' : 'Smash incoming  ·  get to the ring';
   else if (match.phase === 'idle') h = 'J  serve      F  ball feed';
   else if (match.phase === 'wait') h = 'Waiting for the host…';
-  else if (match.phase === 'serve-wait') h = iServe() ? `J  toss, then J on green      arrows  aim (${AIM_NAMES[aimCell.row][aimCell.col]})` : (teamMode() && match.server === me.side ? `${(playerById(match.serverId) || {}).displayName || 'Teammate'} to serve` : `${sideName(match.server)} to serve`);
-  else if (match.phase === 'serve-toss' && iServe()) h = 'Tap J on green';
+  else if (match.phase === 'serve-wait') h = iServe() ? `J  toss  ·  then on green:  J snap (fast)  ·  K hang (floaty)  ·  arrows aim` : (teamMode() && match.server === me.side ? `${(playerById(match.serverId) || {}).displayName || 'Teammate'} to serve` : `${sideName(match.server)} to serve`);
+  else if (match.phase === 'serve-toss' && iServe()) h = 'On green:  J snap  ·  K hang';
   else if (match.phase === 'rally' && match.poss === me.side && !(approach && !approach.dead) && P.sideOfX(ball.x) === me.side) h = 'Tap J set  ·  K kick on green   ·   arrows  aim';
   if (h !== lastHint) { lastHint = h; $('hint').textContent = h; $('hint').classList.toggle('hidden', !h); }
 }
@@ -3349,11 +3362,11 @@ function toggleHelp(force) {
    aims away from you, and lets balls that are going out drop.
    ===================================================================== */
 const CPU_LEVELS = {
-  easy:   { react: 0.42, speed: 3.1, perfect: 0.25, good: 0.45, spike: 0.2, dig: 0.3,  readOut: 0.5,  serveDelay: 1.8, feint: 0.05 },
-  normal: { react: 0.26, speed: 3.7, perfect: 0.45, good: 0.4,  spike: 0.5, dig: 0.55, readOut: 0.85, serveDelay: 1.4, feint: 0.12 },
-  hard:   { react: 0.14, speed: 4.3, perfect: 0.7,  good: 0.25, spike: 0.8, dig: 0.8,  readOut: 1.0,  serveDelay: 1.1, feint: 0.2 },
+  easy:   { react: 0.42, speed: 3.1, perfect: 0.25, good: 0.45, spike: 0.2, dig: 0.3,  readOut: 0.5,  serveDelay: 1.8, feint: 0.05, block: 0.25 },
+  normal: { react: 0.26, speed: 3.7, perfect: 0.45, good: 0.4,  spike: 0.5, dig: 0.55, readOut: 0.85, serveDelay: 1.4, feint: 0.12, block: 0.5 },
+  hard:   { react: 0.14, speed: 4.3, perfect: 0.7,  good: 0.25, spike: 0.8, dig: 0.8,  readOut: 1.0,  serveDelay: 1.1, feint: 0.2, block: 0.75 },
   // training bot: perfect every time, gets to everything, never plays a ball that's going out
-  train:  { react: 0.04, speed: 9.0, perfect: 1.0,  good: 0,    spike: 1.0, dig: 1.0,  readOut: 1.0,  serveDelay: 1.0, feint: 0 },
+  train:  { react: 0.04, speed: 9.0, perfect: 1.0,  good: 0,    spike: 1.0, dig: 1.0,  readOut: 1.0,  serveDelay: 1.0, feint: 0, block: 1.0 },
 };
 let cpuLevel = 'normal';
 try { cpuLevel = localStorage.getItem('takraw-cpu') || 'normal'; } catch {}
@@ -3518,6 +3531,41 @@ function isChaser(p) {
   }
   return best === p;
 }
+// the attack aim of whoever on the other side is jumping into a spike / smash right now
+function attackerTele(p) {
+  if (!teamMode()) return p === them && me && me.side !== p.side ? myTele : null;
+  for (const q of allPlayers()) if (q.side !== p.side) { const t = q === me ? myTele : q.tele; if (t) return t; }
+  return null;
+}
+// team games: the player nearest the net is the blocker
+function isBlocker(p) {
+  const mates = onSide(p.side);
+  return mates.reduce((a, b) => (Math.abs(b.pos.x) < Math.abs(a.pos.x) ? b : a), mates[0]) === p;
+}
+// a CPU blocks their attack as it crosses the net (same geometry + shot as a human block)
+function cpuTryBlock(p, e) {
+  const ai = p.ai || (p === them ? cpu : null);
+  if (!ai || !ai.goNet || p.y <= 0.12) return false;
+  const k = shortK(attackLandX()), win = blockWin(k);
+  if (!blockGeomOk(e, win, p)) return false;
+  ai.goNet = false;
+  const perfect = Math.random() < (training ? 1 : 0.55);
+  const s = sideSign(p.side);
+  const from = { x: s * 0.12, y: Math.max(e.y, P.netTop(e.z) + 0.15), z: e.z };
+  const zIn = (z) => THREE.MathUtils.clamp(z, -(F.hw - 0.4), F.hw - 0.4);
+  const shot = perfect
+    ? P.solveSpeed(from, { x: s * (0.9 + Math.random() * 1.3), z: zIn(e.z + (Math.random() - 0.5) * 2.4) }, 15)
+    : P.solveApex(from, { x: s * (1.6 + Math.random() * 1.6), z: zIn(e.z + (Math.random() - 0.5) * 2) }, Math.max(from.y + 1.2, 3.4), false);
+  setBall(shot);
+  match.lastPart = perfect ? 'stuff' : 'block';
+  match.poss = other(p.side); match.cnt = 0; match.last = p.side; match.settled = false;
+  if (perfect) hitStop = 0.09;
+  p.action = { part: 'block', t: 0 };
+  contactJuice(match.lastPart, perfect ? 'PERFECT' : 'GOOD', from, false);
+  if (teamMode()) sendTouchAs(p, match.lastPart, perfect ? 'PERFECT' : 'GOOD');
+  renderMatchUI();
+  return true;
+}
 function cpuThink(p, ai, dt) {
   const s = sideSign(p.side), L = cpuL();
   if (ai.pickAimSoon && match.phase !== 'serve-toss') { ai.pickAimSoon = false; cpuPickAim(p, ai); }
@@ -3525,6 +3573,21 @@ function cpuThink(p, ai, dt) {
   if (teamMode() && p.slot === 'front') { tx = -s * 2.2; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5); }
   else if (teamMode() && p.slot === 'back') { tx = -s * 5.6; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5); }
   const myServe = match.server === p.side && (!teamMode() || match.serverId === p.id);
+  // reading their jump: a SHORT attack aimed at us → get to the net and block it
+  // read the SET: their ball dropping near the net, settled → a spike is coming, so step up to the net;
+  // jump only if the attacker's aim (seen once they jump) is SHORT — a deep aim is left for the dig
+  const tele = attackerTele(p);
+  const theirSet = ballLive && match.phase === 'rally' && match.poss && match.poss !== p.side && match.settled &&
+    P.sideOfX(ball.x) !== p.side && Math.abs(ball.x) < 3.6;
+  if (theirSet && (!teamMode() || isBlocker(p))) {
+    if (ai.blockFor !== ballSerial) { ai.blockFor = ballSerial; ai.goNet = Math.random() < (L.block || 0); }
+  } else if (P.sideOfX(ball.x) === p.side || !ballLive || match.phase !== 'rally') ai.goNet = false;   // (stays on through their spike until it crosses)
+  ai.wantBlock = !!ai.goNet && (!tele || shortK(tele.x) > 0.5);
+  if (ai.wantBlock && ballLive && match.phase === 'rally') {
+    tx = -s * 0.45; tz = THREE.MathUtils.clamp(ball.z, -F.hw, F.hw);
+    // jump with the attacker so we're up as it crosses
+    if (tele && p.y <= 0 && ball.vy < 0 && ball.y < 3.15 && Math.hypot(p.pos.x - tx, p.pos.z - tz) < 0.9) { p.vy = JUMP_V; p.action = { part: 'block', t: 0 }; }
+  }
 
   // ---------- serving ----------
   if (match.phase === 'serve-wait' && myServe) {
