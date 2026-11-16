@@ -61,20 +61,37 @@ export function buildMonastery(ctx) {
   {
     const puffs = [];
     for (let i = 0; i < 340; i++) {
-      const a = R() * Math.PI * 2, r = 50 + Math.pow(R(), 0.7) * 380;
+      const a = R() * Math.PI * 2, r = 75 + Math.pow(R(), 0.7) * 360;
       const s = 8 + R() * 20;
       const b = new THREE.IcosahedronGeometry(1, 1); b.scale(s * 1.4, s * 0.75, s * 1.2);                 // big billowing heaps, not a flat sheet
       b.translate(Math.cos(a) * r, CLOUD_Y + (R() - 0.3) * 14, Math.sin(a) * r);
       b.deleteAttribute('uv');
+      // shade each heap: blue-grey underneath, bright on top
+      const pos = b.attributes.position, col = new Float32Array(pos.count * 3), lo = new THREE.Color(0x9aa8bc), hi = new THREE.Color(0xffffff), c = new THREE.Color();
+      let minY = Infinity, maxY = -Infinity; for (let k = 0; k < pos.count; k++) { minY = Math.min(minY, pos.getY(k)); maxY = Math.max(maxY, pos.getY(k)); }
+      for (let k = 0; k < pos.count; k++) { c.copy(lo).lerp(hi, Math.pow((pos.getY(k) - minY) / (maxY - minY + 1e-6), 0.7)); col.set([c.r, c.g, c.b], k * 3); }
+      b.setAttribute('color', new THREE.BufferAttribute(col, 3));
       puffs.push(b);
     }
-    const cm = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: false, emissive: 0x404858, emissiveIntensity: 0.4 });
+    const cm = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 1, flatShading: false, emissive: 0x404858, emissiveIntensity: 0.4 });
     cloudGroup.add(new THREE.Mesh(mergeGeometries(puffs), cm));
     var cloudMat = cm;
     // a flat cloud floor so there are never holes to the ground
     const floor = new THREE.Mesh(new THREE.CircleGeometry(700, 40), new THREE.MeshStandardMaterial({ color: 0xf2f4f8, roughness: 1, emissive: 0x30384a, emissiveIntensity: 0.35 }));
     floor.rotation.x = -Math.PI / 2; floor.position.y = CLOUD_Y - 2; g.add(floor);
     var floorMat = floor.material;
+    // a hazy cloud bank all round the horizon: hides the far tree line painted in the shared sky and melts the clouds into it
+    const grad = (() => {
+      const c = document.createElement('canvas'); c.width = 4; c.height = 256;
+      const x = c.getContext('2d'), gr = x.createLinearGradient(0, 0, 0, 256);
+      gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.12, 'rgba(255,255,255,0.35)'); gr.addColorStop(0.24, 'rgba(255,255,255,0.85)'); gr.addColorStop(0.32, 'rgba(255,255,255,1)'); gr.addColorStop(1, 'rgba(255,255,255,1)');
+      x.fillStyle = gr; x.fillRect(0, 0, 4, 256);
+      const t = new THREE.CanvasTexture(c); return t;
+    })();
+    const bank = new THREE.Mesh(new THREE.CylinderGeometry(350, 350, 220, 48, 1, true),        // inside the camera's 400 m far plane
+      new THREE.MeshBasicMaterial({ map: grad, color: 0xe6edf6, transparent: true, depthWrite: false, side: THREE.BackSide, fog: false }));
+    bank.position.y = -10; bank.renderOrder = -1; g.add(bank);              // opaque up to ~6° above the horizon, fading out by ~10°
+    var bankMat = bank.material;
     // distant peaks rising through the clouds (one with a tiny white chedi)
     for (const [x, z, h, r] of [[150, 90, 70, 40], [-170, 60, 85, 50], [120, -150, 60, 36], [-110, -130, 95, 55], [230, -20, 75, 45], [-240, -10, 65, 42], [20, 220, 80, 50], [-30, -230, 70, 44]]) {
       const pk = new THREE.ConeGeometry(r, h, 9, 3);
@@ -179,6 +196,7 @@ export function buildMonastery(ctx) {
     gilt.emissiveIntensity = day ? 0.15 : 0.8;
     cloudMat.emissive.set(day ? 0x404858 : 0x1a2440); cloudMat.emissiveIntensity = day ? 0.4 : 0.35;
     floorMat.emissive.set(day ? 0x30384a : 0x101830);
+    bankMat.color.set(day ? 0xe6edf6 : 0x1c2438);
   }
   return { g, fx, update, setTime, fog: { day: [90, 650], night: [70, 420] } };
 }
