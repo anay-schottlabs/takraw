@@ -487,7 +487,61 @@ function buildCourt() {
   return g;
 }
 let netMesh = null, netShake = 0;
-scene.add(buildCourt());
+let courtGroup = buildCourt();
+scene.add(courtGroup);
+// boundary balustrade around the free zone — its own group so it can move when the court is resized (3v3)
+const boardMats = {
+  plaster: new THREE.MeshStandardMaterial({ color: 0xefe2cf, roughness: 0.88 }),
+  red: new THREE.MeshStandardMaterial({ color: 0x8a1e17, roughness: 0.45 }),
+  gold: new THREE.MeshStandardMaterial({ color: 0xdba54c, metalness: 0.9, roughness: 0.3, emissive: 0x2c1805 }),
+};
+function buildBoards() {
+  const g = new THREE.Group();
+  const MAT = boardMats;
+  const boards = makeBatch();
+  {
+    const BH = P.C.boardH, BT = 0.2;
+    const panelMat = new THREE.MeshStandardMaterial({ map: panelTexture(), roughness: 0.5, metalness: 0.15 });
+    const bx = F.outX + BT / 2, bz = F.outZ + BT / 2;
+    const runs = [                       // [length, x, z, rotY] — rotY turns the inner face toward the court
+      [F.outX * 2 + BT * 2, 0, -bz, 0], [F.outX * 2 + BT * 2, 0, bz, Math.PI],
+      [F.outZ * 2, -bx, 0, Math.PI / 2], [F.outZ * 2, bx, 0, -Math.PI / 2],
+    ];
+    for (const [len, x, z, ry] of runs) {
+      const nx = Math.sin(ry), nz = Math.cos(ry);
+      boards.put(MAT.plaster, xf(new THREE.BoxGeometry(len, BH - 0.18, BT), x, (BH - 0.18) / 2, z, ry));
+      boards.put(MAT.gold, xf(new THREE.BoxGeometry(len + 0.02, 0.05, BT + 0.04), x, BH - 0.155, z, ry));
+      boards.put(MAT.red, xf(new THREE.BoxGeometry(len + 0.08, 0.13, BT + 0.1), x, BH - 0.065, z, ry));
+      const pg = new THREE.PlaneGeometry(len - 0.1, 0.42);
+      const uv = pg.attributes.uv;
+      for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * (len / 3.36));
+      boards.put(panelMat, xf(pg, x + nx * (BT / 2 + 0.004), 0.31, z + nz * (BT / 2 + 0.004), ry));
+    }
+  }
+
+  boards.build(g, { castShadow: true, receiveShadow: true });
+  return g;
+}
+let boardsGroup = null;
+// 1v1 / 2v1 / 2v2 play on the normal court; 3v3 gets a bigger one (everything that depends on the size is rebuilt)
+const COURT_SIZES = { normal: [15.4, 7.0], big: [18.2, 8.6] };
+let courtSize = 'normal';
+function setCourtSize(size) {
+  if (size === courtSize || !COURT_SIZES[size]) return;
+  courtSize = size;
+  const [L, W] = COURT_SIZES[size];
+  F.L = L; F.W = W; F.hl = L / 2; F.hw = W / 2;
+  F.outX = F.hl + F.free; F.outZ = F.hw + F.free; F.postZ = F.hw + F.postOut;
+  Object.assign(P.C, { hl: F.hl, hw: F.hw, outX: F.outX, outZ: F.outZ, postZ: F.postZ });
+  const kl = F.hl / 7.7, kw = F.hw / 3.5;
+  AIM_ROWS0.forEach((v, i) => { AIM_ROWS[i] = v * kl; });
+  AIM_COLS0.forEach((v, i) => { AIM_COLS[i] = v * kw; });
+  scene.remove(courtGroup); courtGroup = buildCourt(); scene.add(courtGroup);
+  scene.remove(boardsGroup); boardsGroup = buildBoards(); scene.add(boardsGroup);
+  buildSideGlow();
+  landingDirty = true;
+}
+
 
 /* =====================================================================
    Surroundings — temple courtyard at dusk
@@ -643,27 +697,6 @@ function buildSurroundings() {
     paving.position.y = y0 + 0.002;
     paving.receiveShadow = true;
     g.add(paving);
-  }
-
-  // ---- boundary balustrade (replaces the LED boards; same place, same 0.8 m height) ----
-  {
-    const BH = P.C.boardH, BT = 0.2;
-    const panelMat = new THREE.MeshStandardMaterial({ map: panelTexture(), roughness: 0.5, metalness: 0.15 });
-    const bx = F.outX + BT / 2, bz = F.outZ + BT / 2;
-    const runs = [                       // [length, x, z, rotY] — rotY turns the inner face toward the court
-      [F.outX * 2 + BT * 2, 0, -bz, 0], [F.outX * 2 + BT * 2, 0, bz, Math.PI],
-      [F.outZ * 2, -bx, 0, Math.PI / 2], [F.outZ * 2, bx, 0, -Math.PI / 2],
-    ];
-    for (const [len, x, z, ry] of runs) {
-      const nx = Math.sin(ry), nz = Math.cos(ry);
-      boards.put(MAT.plaster, xf(new THREE.BoxGeometry(len, BH - 0.18, BT), x, (BH - 0.18) / 2, z, ry));
-      boards.put(MAT.gold, xf(new THREE.BoxGeometry(len + 0.02, 0.05, BT + 0.04), x, BH - 0.155, z, ry));
-      boards.put(MAT.red, xf(new THREE.BoxGeometry(len + 0.08, 0.13, BT + 0.1), x, BH - 0.065, z, ry));
-      const pg = new THREE.PlaneGeometry(len - 0.1, 0.42);
-      const uv = pg.attributes.uv;
-      for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * (len / 3.36));
-      boards.put(panelMat, xf(pg, x + nx * (BT / 2 + 0.004), 0.31, z + nz * (BT / 2 + 0.004), ry));
-    }
   }
 
   // ---- ordination halls (one at each end, gable front facing the court) ----
@@ -912,6 +945,8 @@ function buildSurroundings() {
   return g;
 }
 scene.add(buildSurroundings());
+boardsGroup = buildBoards();
+scene.add(boardsGroup);
 
 /* =====================================================================
    Player model — 1.72 m, jointed, numbered kit
@@ -1353,6 +1388,9 @@ const playerById = (id) => (me && id === myId ? me : others.get(id) || null);
 const iServe = () => !!me && match.server === me.side && (!teamMode() || match.serverId === myId);
 function teamSpawn(side, pos) {
   const s = sideSign(side);
+  const kl = F.hl / 7.7, kw = F.hw / 3.5;
+  if (pos === 'fl') return new THREE.Vector3(-s * 2.6 * kl, 0, -s * 2.3 * kw);
+  if (pos === 'fr') return new THREE.Vector3(-s * 2.6 * kl, 0, s * 2.3 * kw);
   if (pos === 'front') return new THREE.Vector3(-s * 2.2, 0, -s * 1.2);
   if (pos === 'back') return new THREE.Vector3(-s * (F.hl - F.serveFromBack + 0.6), 0, s * 1.2);
   return spawnPoint(side);
@@ -1515,8 +1553,10 @@ ballOutline.visible = false;
 ballMesh.add(ballOutline);
 
 /* ---------------- whose side is the ball on? Light up that half in its team colour ---------------- */
-const sideGlow = (() => {
-  const halves = {};
+const sideGlow = {};
+function buildSideGlow() {
+  for (const k of Object.keys(sideGlow)) { scene.remove(sideGlow[k].g); delete sideGlow[k]; }
+  const halves = sideGlow;
   for (const side of ['left', 'right']) {
     const s = sideSign(side);
     const g = new THREE.Group();
@@ -1539,7 +1579,8 @@ const sideGlow = (() => {
     halves[side] = { g, wash, lineMat, a: 0 };
   }
   return halves;
-})();
+}
+buildSideGlow();
 function teamColor(side) {
   const p = playerBySide(side);
   return p ? p.team.jersey : (me && side === me.side ? TEAMS.me.jersey : TEAMS.opp.jersey);
@@ -1949,8 +1990,9 @@ function aimAxes() {
 // AIM: nine spots on their court (3 rows × 3 columns). Default = middle-centre.
 // Arrow keys step your aim around the grid any time (↑ deeper, ↓ shorter, ← / → sideways, combos go diagonal).
 // A dot on their side shows where you'll hit — only you can see it. It resets to centre after each kick.
-const AIM_ROWS = [1.6, 4.0, 6.6];        // front, middle, back (m from the net)
+const AIM_ROWS = [1.6, 4.0, 6.6];        // front, middle, back (m from the net) — scaled for the 3v3 court
 const AIM_COLS = [-2.4, 0, 2.4];         // left, centre, right (your screen)
+const AIM_ROWS0 = AIM_ROWS.slice(), AIM_COLS0 = AIM_COLS.slice();
 const AIM_NAMES = [['FRONT LEFT', 'FRONT CENTER', 'FRONT RIGHT'], ['SIDE LEFT', 'CENTER', 'SIDE RIGHT'], ['BACK LEFT', 'BACK CENTER', 'BACK RIGHT']];
 const aimCell = { row: 1, col: 1 };
 let aimFlash = 0;
@@ -3573,8 +3615,12 @@ function cpuThink(p, ai, dt) {
   const s = sideSign(p.side), L = cpuL(p);
   if (ai.pickAimSoon && match.phase !== 'serve-toss') { ai.pickAimSoon = false; cpuPickAim(p, ai); }
   let tx = -s * 4.2, tz = 0, run = true;          // home spot: middle of my half
+  const kl = F.hl / 7.7, kw = F.hw / 3.5;
   if (teamMode() && p.slot === 'front') { tx = -s * 2.2; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5); }
-  else if (teamMode() && p.slot === 'back') { tx = -s * 5.6; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5); }
+  else if (teamMode() && p.slot === 'back') { tx = -s * 5.6 * kl; tz = THREE.MathUtils.clamp(ball.z * 0.4, -1.5, 1.5) * kw; }
+  else if (teamMode() && (p.slot === 'fl' || p.slot === 'fr')) {             // 3v3 feeders: each covers their side of the front court
+    tx = -s * 2.6 * kl; tz = (p.slot === 'fl' ? -s : s) * 2.2 * kw + ball.z * 0.25;
+  }
   const myServe = match.server === p.side && (!teamMode() || match.serverId === p.id);
   // reading their jump: a SHORT attack aimed at us → get to the net and block it
   // read the SET: their ball dropping near the net, settled → a spike is coming, so step up to the net;
@@ -3729,8 +3775,9 @@ function updateCamera() {
   if (me && playing) {
     // locked behind your own baseline, framing your whole half and the net
     const s = sideSign(me.side);
-    camPos.set(-s * 14.6, 5.3, 0);
-    camLook.set(s * 1.6, 0.55, 0);
+    const kw = F.W / 7.0;                                   // 1 on the normal court, bigger for 3v3
+    camPos.set(-s * (F.hl + 6.9 * kw), 5.3 * kw, 0);
+    camLook.set(s * 1.6 * kw, 0.55, 0);
   } else if (pv.p) {
     // customize: close on your player, who stands on the right of the screen
     camPos.set(pv.p.pos.x - 3.4, 1.55, pv.p.pos.z + 0.2);
@@ -3951,14 +3998,16 @@ function netSend(msg, except = null) {
   else if (conn && conn.open) conn.send(msg);
 }
 function buildRoster(f) {
-  const slots = f === '2v2' ? [['left', 'front'], ['left', 'back'], ['right', 'front'], ['right', 'back']]
+  const slots = f === '3v3' ? [['left', 'back'], ['left', 'fl'], ['left', 'fr'], ['right', 'back'], ['right', 'fl'], ['right', 'fr']]
+    : f === '2v2' ? [['left', 'front'], ['left', 'back'], ['right', 'front'], ['right', 'back']]
     : f === '2v1' ? [['left', 'front'], ['left', 'back'], ['right', 'solo']]
     : [['left', 'solo'], ['right', 'solo']];
   const L = slots.map(([side, pos]) => ({ side, pos, kind: 'open', id: null, name: '' }));
   // keep the people already in the room (host first)
   const humans = roster.filter((r) => r.kind === 'human');
   if (!humans.some((h) => h.id === 'h')) humans.unshift({ id: 'h', name: myName, kind: 'human', look: myLook });
-  const order = [1, 0, 2, 3].filter((i) => i < L.length);   // host takes the back (serving) spot
+  // host takes their side's back (serving) spot first, then the rest of their side, then the other side
+  const order = L.map((_, i) => i).sort((a, b) => (L[a].side === L[b].side ? 0 : L[a].side === 'left' ? -1 : 1) || (L[a].pos === 'back' ? -1 : L[b].pos === 'back' ? 1 : 0));
   for (const h of humans) { const i = order.find((k) => L[k].kind === 'open'); if (i === undefined) break; Object.assign(L[i], { kind: 'human', id: h.id, name: h.name, look: h.look }); }
   return L;
 }
@@ -3967,7 +4016,7 @@ function sendRoster() { if (mode === 'host') netSend({ t: 'roster', fmt, roster:
 function setFormat(f) {
   if (mode !== 'host' || playing || f === fmt) return;
   const humans = roster.filter((r) => r.kind === 'human').length;
-  const cap = f === '2v2' ? 4 : f === '2v1' ? 3 : 2;
+  const cap = f === '3v3' ? 6 : f === '2v2' ? 4 : f === '2v1' ? 3 : 2;
   if (humans > cap || (f === '1v1' && humans > 1)) return;     // can't squeeze people out
   fmt = f;
   roster = buildRoster(f);
@@ -4036,6 +4085,7 @@ function teamStart() {
 }
 function startTeamGame(list) {
   roster = list;
+  setCourtSize(fmt === '3v3' ? 'big' : 'normal');
   const mine = list.find((r) => r.id === myId);
   if (!mine) return;
   startGame(mine.side);
@@ -4218,7 +4268,7 @@ function refreshLobbies() {
       c.on('data', (msg) => {
         if (msg && msg.t === 'lobby' && msg.v === PROTOCOL && msg.open && /^[A-Z0-9]{4}$/.test(msg.code || '')) {
           found.push({ code: msg.code, host: String(msg.host || 'Player').slice(0, 14), born: Number(msg.born) || 0,
-            fmt: ['1v1', '2v1', '2v2'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2 });
+            fmt: ['1v1', '2v1', '2v2', '3v3'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2 });
         }
         end();
       });
@@ -4325,6 +4375,7 @@ function teardown() {
   links.clear();
   if (others.size) { for (const p of others.values()) p.dispose(); others.clear(); them = null; }
   fmt = '1v1'; roster = []; myId = 'h';
+  setCourtSize('normal');
   training = false; $('train-panel').classList.add('hidden');
   $('room').classList.add('hidden');
   if (me) { me.dispose(); me = null; }
