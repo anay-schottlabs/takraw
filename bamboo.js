@@ -34,7 +34,7 @@ export function buildBamboo(ctx) {
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i), z = p.getZ(i);
       p.setY(i, -0.12 + (clearing(x, z) ? 0 : 0.25 * Math.sin(x * 0.2) * Math.sin(z * 0.17)));
-      c.set(clearing(x, z, -1) ? 0x7a6448 : 0x6a5a34).lerp(new THREE.Color(R() < 0.5 ? 0xa88a4a : 0x4a5a2a), R() * 0.45);
+      c.set(clearing(x, z, -1) ? 0x6a5640 : 0x4f4a2c).lerp(new THREE.Color(R() < 0.5 ? 0x8a7a3a : 0x3a4a22), R() * 0.5);   // dark leaf litter
       col.set([c.r, c.g, c.b], i * 3);
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -74,9 +74,26 @@ export function buildBamboo(ctx) {
       return m;
     };
     const im = new THREE.InstancedMesh(sGeo, sway(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 })), culms.length);
-    const leaves = []; for (let k = 0; k < 3; k++) { const l = new THREE.IcosahedronGeometry(1, 0); l.scale(1.5, 0.35, 0.9); l.rotateY(k * 1.3); l.translate(Math.cos(k * 1.3) * 0.9, 0.62 + k * 0.08, Math.sin(k * 1.3) * 0.9); leaves.push(l); }
+    // leaf sprays: three crossed, drooping cards painted with slender bamboo leaves (alpha-tested)
+    const leafTex = (() => {
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const x = c.getContext('2d');
+      for (let i = 0; i < 46; i++) {
+        const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.4, l = 22 + Math.random() * 30, cx = 64 + (Math.random() - 0.5) * 70, cy = 40 + Math.random() * 70;
+        x.save(); x.translate(cx, cy); x.rotate(a);
+        x.fillStyle = ['#4f8a2e', '#6a9a36', '#3f7a2a', '#7aa83f'][i % 4];
+        x.beginPath(); x.ellipse(l / 2, 0, l / 2, 3 + Math.random() * 2, 0, 0, Math.PI * 2); x.fill(); x.restore();
+      }
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+    })();
+    const leaves = [];
+    for (let k = 0; k < 3; k++) {
+      const l = new THREE.PlaneGeometry(3.2, 2.4, 2, 1);
+      const pa = l.attributes.position; for (let i = 0; i < pa.count; i++) pa.setZ(i, -0.25 * Math.abs(pa.getX(i)) ** 1.5);   // droop at the tips
+      l.rotateY((k / 3) * Math.PI); l.translate(0, 0.2, 0); leaves.push(l);
+    }
     const lGeo = mergeGeometries(leaves);
-    const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, flatShading: true });
+    const leafMat = new THREE.MeshStandardMaterial({ map: leafTex, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.75, color: 0xffffff });
     leafMat.onBeforeCompile = (sh) => {
       sh.uniforms.uTime = uTime;
       sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -91,12 +108,43 @@ export function buildBamboo(ctx) {
       im.setMatrixAt(i, o.matrix);
       im.setColorAt(i, c.set(R() < 0.75 ? 0x8fa83f : 0xb8b04a).offsetHSL(0, 0, (R() - 0.5) * 0.1));
       // leaf spray near the top, sized independently of the culm's skinny scale
-      o.position.set(x, -0.12 + h * (0.72 + R() * 0.2), z); o.rotation.set(0, ry, 0); o.scale.set(1.6 + R(), 2 + R(), 1.6 + R()); o.updateMatrix();
+      o.position.set(x, -0.12 + h * (0.74 + R() * 0.2), z); o.rotation.set(0, ry, 0); o.scale.set(1.1 + R() * 0.6, 1.3 + R() * 0.6, 1.1 + R() * 0.6); o.updateMatrix();
       il.setMatrixAt(i, o.matrix);
-      il.setColorAt(i, c.set(0x4f8a2e).offsetHSL((R() - 0.5) * 0.04, 0, (R() - 0.5) * 0.12));
+      il.setColorAt(i, c.set(0xffffff).offsetHSL(0, 0, -(R() * 0.18)));
     });
     im.computeBoundingSphere(); il.computeBoundingSphere();
     g.add(im, il);
+  }
+
+  /* ---------------- ground cover: ferns, rocks, fallen culms, new shoots ---------------- */
+  {
+    const fern = [];
+    for (let k = 0; k < 8; k++) { const f = new THREE.PlaneGeometry(0.3, 1.3, 1, 4); const pa = f.attributes.position; for (let j = 0; j < pa.count; j++) { const y = pa.getY(j) + 0.65; pa.setXYZ(j, pa.getX(j) * (1 - y / 1.6), -0.3 * y * y + 0.55 * y, y); } f.rotateY((k / 8) * Math.PI * 2); fern.push(f.toNonIndexed()); }
+    for (const f of fern) f.deleteAttribute('uv');
+    const fg = mergeGeometries(fern);
+    const parts = [];
+    let placed = 0, tries = 0;
+    const spots = [];
+    while (placed < 620 && tries++ < 6000) {
+      const near = R() < 0.6;                                  // most of them crowd the clearing's edge
+      const x = near ? (R() - 0.5) * (F.outX * 2 + 24) : (R() - 0.5) * 130, z = near ? (R() - 0.5) * (F.outZ * 2 + 22) : (R() - 0.5) * 110;
+      if (clearing(x, z, 0.3) || onPath(x, z)) continue;
+      spots.push([x, z]); placed++;
+    }
+    const ferns = new THREE.InstancedMesh(fg, new THREE.MeshStandardMaterial({ color: 0x4f7a2a, roughness: 0.8, side: THREE.DoubleSide, flatShading: true }), spots.length);
+    const o = new THREE.Object3D();
+    spots.forEach(([x, z], i) => { o.position.set(x, -0.12, z); o.rotation.set(0, R() * 6, 0); o.scale.setScalar(0.7 + R() * 0.9); o.updateMatrix(); ferns.setMatrixAt(i, o.matrix); });
+    ferns.computeBoundingSphere();
+    g.add(ferns);
+    for (let i = 0; i < 70; i++) {
+      const x = (R() - 0.5) * 110, z = (R() - 0.5) * 90;
+      if (clearing(x, z, 0.5) || onPath(x, z)) continue;
+      const kind = R();
+      if (kind < 0.4) { const r = new THREE.IcosahedronGeometry(0.35 + R() * 0.8, 0); r.rotateY(R() * 6); r.translate(x, -0.05, z); parts.push(paint(r, R() < 0.5 ? 0x8a857a : 0x5a6a3a)); }
+      else if (kind < 0.7) { const c = new THREE.CylinderGeometry(0.08, 0.09, 4 + R() * 5, 6); c.rotateZ(Math.PI / 2); c.rotateY(R() * 6); c.translate(x, 0.0, z); parts.push(paint(c, 0xb8a860)); }   // fallen culm
+      else { for (let k = 0; k < 3; k++) { const s = new THREE.ConeGeometry(0.07, 0.6 + R() * 0.6, 5); s.translate(x + (R() - 0.5) * 0.6, 0.25, z + (R() - 0.5) * 0.6); parts.push(paint(s, 0x6a8a3a)); } }   // new shoots
+    }
+    if (parts.length) g.add(new THREE.Mesh(mergeGeometries(parts), MAT.vc));
   }
 
   /* ---------------- shrine + stone lanterns along the path ---------------- */
