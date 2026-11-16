@@ -5,7 +5,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rnd, makeWater, shophouseRow, festoons, floodPoles, boundaryRail, paint, vcMat } from './props.js';
-import { personGeometry } from './life.js';
+import { personGeometry, makePeckers } from './life.js';
+import { treeClumps } from './props.js';
 
 const WATER_Y = -1.25;
 
@@ -23,7 +24,7 @@ export function buildRiverside(ctx) {
     teak: new THREE.MeshStandardMaterial({ map: tex('planks_diff.jpg', 1, true), normalMap: tex('planks_nor_gl.jpg'), color: 0xc49a72, roughness: 0.75 }),
     pile: new THREE.MeshStandardMaterial({ color: 0x3b2a1f, roughness: 0.9 }),
     stone: new THREE.MeshStandardMaterial({ color: 0x9a9184, roughness: 0.95, flatShading: true }),
-    paving: new THREE.MeshStandardMaterial({ color: 0x8a8070, roughness: 0.95 }),
+    paving: (() => { const t = texLoader.load('assets/temple/paving_diff.jpg'); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(40, 4); t.colorSpace = THREE.SRGBColorSpace; return new THREE.MeshStandardMaterial({ map: t, color: 0xd8ccb8, roughness: 0.92 }); })(),
     red: new THREE.MeshStandardMaterial({ color: 0x8a1e17, roughness: 0.45 }),
     gold: new THREE.MeshStandardMaterial({ color: 0xdba54c, metalness: 0.9, roughness: 0.3, emissive: 0x2c1805 }),
     white: new THREE.MeshStandardMaterial({ color: 0xece4d4, roughness: 0.85 }),
@@ -94,6 +95,39 @@ export function buildRiverside(ctx) {
       for (let k = 0; k < 4; k++) put(MAT.vc, paint(new THREE.SphereGeometry(0.12, 6, 5), [0xff8a2a, 0x7fbf3a, 0xe8d24a, 0xd8382e][k]), x - 0.6 + k * 0.4, 0.95, z);
       put(MAT.glow, new THREE.SphereGeometry(0.08, 6, 5), x, 2.1, z);
     }
+  }
+
+  /* ---------------- people: crowds along the quay + at the stalls, spectators on the pier ---------------- */
+  {
+    const pg = personGeometry(), pgh = personGeometry({ hat: true });
+    const parts = [];
+    const shirts = [0x3a6ad8, 0xd84a3a, 0xf2f2f2, 0x2f9a5a, 0xe8b82a, 0x7a4ab8, 0x2a2a2a, 0xff8ac0];
+    const skins = [0x8a5a3a, 0xc99a72, 0x6b4a30];
+    const person = (x, z, ry, hat = false, sc = 1) => {
+      const pp = hat ? pgh : pg;
+      const list = [[pp.body, shirts[Math.floor(R() * shirts.length)]], [pp.head, skins[Math.floor(R() * 3)]]];
+      if (hat) list.push([pp.hat, 0xd8b25a]);
+      for (const [geo, col] of list) { const gg = geo.clone(); gg.scale(sc, sc, sc); gg.rotateY(ry); gg.translate(x, 0.12, z); parts.push(paint(gg, col)); }
+    };
+    for (let i = 0; i < 90; i++) {
+      const x = (R() - 0.5) * 150, z = QUAY_Z - 1.6 - R() * 9.5;
+      if (Math.abs(x) < PX + 1 && z > QUAY_Z - 3) continue;
+      person(x, z, R() * 6, R() < 0.2, 0.88 + R() * 0.2);
+    }
+    // spectators along the pier's open edges, facing the court
+    for (const sx of [-1, 1]) for (let z = PZ0 + 1.5; z < PZ1 - 0.6; z += 1.1) if (R() < 0.6) {
+      const x = sx * (F.outX + 1.6 + R() * 0.6), g2 = new THREE.Group();
+      person(x, z, sx > 0 ? -Math.PI / 2 : Math.PI / 2, R() < 0.3, 0.9 + R() * 0.15);
+    }
+    const mesh = new THREE.Mesh(mergeGeometries(parts.map((p) => { p.translate(0, -0.24, 0); return p; })), vcMat({ flatShading: true }));
+    g.add(mesh);
+    g.add(makePeckers(Array.from({ length: 14 }, () => [(R() - 0.5) * 60, 0.12, QUAY_Z - 2 - R() * 4, R() * 6]), 0x8c90a2).g);
+  }
+  // planter trees along the quay
+  {
+    const spots = [];
+    for (let x = -80; x <= 80; x += 14) { if (Math.abs(x) < PX + 2) continue; spots.push([x, 0.15, QUAY_Z - 10.2, 0.8 + R() * 0.3, R() * 6]); put(MAT.white, new THREE.CylinderGeometry(0.9, 0.8, 0.5, 10), x, 0.4, QUAY_Z - 10.2); }
+    g.add(treeClumps(spots, { leaf: 0x3a6a32 }));
   }
 
   /* ---------------- far bank: a temple prang among trees, a riverside sala ---------------- */
@@ -172,6 +206,12 @@ export function buildRiverside(ctx) {
       const b = mkBoat('canoe', i);
       const side = i % 2 ? 1 : -1;
       boats.push({ b, x: side * (PX + 4 + R() * 26), z: PZ1 + 1.6 + R() * 6, v: (R() - 0.5) * 0.6, bob: R() * 6, drift: true, home: side * (PX + 4 + R() * 26) });
+    }
+    // a little floating market crowded against the quay wall on both sides of the pier
+    for (let i = 0; i < 12; i++) {
+      const b = mkBoat('canoe', i + 6);
+      const side = i % 2 ? 1 : -1, x = side * (PX + 3 + Math.floor(i / 2) * 5.2 + R() * 1.5);
+      boats.push({ b, x, z: QUAY_Z + 1.6 + (i % 3) * 1.3, v: (R() - 0.5) * 0.3, bob: R() * 6, drift: true, home: x });
     }
   }
 
