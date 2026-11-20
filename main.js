@@ -711,9 +711,9 @@ function setTimeOfDay(t) {
 }
 // what the player has picked (remembered), and the map of the game in progress (a guest gets it from the host)
 let mapPick = { map: 'temple', time: 'night' };
-try { const m = JSON.parse(localStorage.getItem('takraw-mappick') || 'null'); if (m) mapPick = { map: mapById(m.map).id, time: m.time === 'day' ? 'day' : 'night' }; } catch {}
+try { const m = JSON.parse(localStorage.getItem('takraw-mappick') || 'null'); if (m) mapPick = { map: mapById(m.map).id, time: 'night' }; } catch {}
 let gameMap = null;
-const cleanChoice = (m, t) => ({ map: mapById(m).id, time: t === 'day' ? 'day' : 'night' });
+const cleanChoice = (m) => ({ map: mapById(m).id, time: 'night' });   // every map is played at night (day versions retired)
 function applyArena(choice) { setVenue(choice.map); setTimeOfDay(choice.time); applyUiColours(); }
 // the menus take the colours of the scene behind them (see maps.js `ui`); night washes are a touch deeper
 function applyUiColours() {
@@ -1550,7 +1550,8 @@ window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
   keys.add(e.code);
   if (!e.repeat) onActionKey(e.code);
-  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+  // in a match (or browsing maps with the arrows) these keys are controls; in the menus and How to play they scroll as normal
+  if ((playing && !helpOpen()) || (mapPreview && e.code !== 'Space')) { if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault(); }
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => keys.clear());
@@ -1582,6 +1583,73 @@ function teamSpawn(side, pos) {
 const WALK = 4.0, ACCEL = 28, JUMP_V = 7.6, GRAV = 17;   // jump apex ≈ 1.7 m — big midair attacks
 // (no dash — reaching the ball is about reading it early and moving)
 let jumpQueued = false;        // a grounded L at the net jumps you into the block
+/* SLIDE (Shift): a fast feet-first slide in the direction you're moving, then a beat to get up. One per visit of the
+   ball to your side — it re-arms once the ball is over on their side (or dead). Pressing it projects your slide
+   against the ball: meet it low and close = PERFECT (pops up like a set), a stretch = GOOD (scrappy), else a whiff. */
+const SLIDE_V = 10.5, SLIDE_GO = 0.42, SLIDE_DUR = 0.8;   // launch speed (m/s), sliding time, total incl. getting up (s)
+const SLIDE_PERFECT = 0.32, SLIDE_GOOD = 0.85;             // closest meeting with the ball: distance + how far off shin height it is
+let slide = null, slideReady = true, slideSeq = 0;
+const slideOff = (t) => SLIDE_V * (Math.min(t, SLIDE_GO) - Math.min(t, SLIDE_GO) ** 2 / (2 * SLIDE_GO));   // distance covered after t s
+function trySlide() {
+  if (!me || !playing || helpOpen() || slide || me.y > 0 || serveLocked() || recoverT > 0) return;
+  if (!slideReady) { showTiming(null, 'NO SLIDE', null, 'once per side'); sfx.miss(); return; }
+  const sgn = sideSign(me.side);
+  let fwd = 0, right = 0;
+  if (keys.has('KeyW')) fwd += 1;
+  if (keys.has('KeyS')) fwd -= 1;
+  if (keys.has('KeyA')) right -= 1;
+  if (keys.has('KeyD')) right += 1;
+  let dx = fwd * sgn, dz = right * sgn;
+  if (!dx && !dz) {                                  // no direction held: slide at the ball's landing spot, else where you face
+    const L = ballLive && landingCache && P.sideOfX(landingCache.x) === me.side ? landingCache : null;
+    if (L) { dx = L.x - me.pos.x; dz = L.z - me.pos.z; } else { dx = Math.sin(me.facing); dz = Math.cos(me.facing); }
+  }
+  const len = Math.hypot(dx, dz) || 1;
+  dx /= len; dz /= len;
+  slide = { t: 0, dx, dz };
+  slideReady = false; slideSeq++;
+  me.facing = Math.atan2(dx, dz);
+  me.action = { part: 'slide', t: 0 };
+  sfx.swing(); fx.dust(me.pos.x, me.pos.z, 20); shake(0.05);
+  // does the slide meet the ball?
+  if (match.phase !== 'rally' || !ballLive || pending || touchCd > 0) return;
+  const b = P.copyBall(ball), h = 1 / 120;
+  let best = { d: Infinity, tb: 0 };
+  for (let t = h; t <= SLIDE_GO + 0.12; t += h) {
+    if (P.step(b, h * BALL_TIME, null)) break;
+    if (P.sideOfX(b.x) !== me.side) continue;
+    const o = slideOff(t), px = me.pos.x + dx * o, pz = me.pos.z + dz * o;
+    if (b.y > 1.1) continue;                                           // a slide only plays low balls
+    const d = Math.hypot(b.x - px, b.z - pz, b.y - 0.35);               // sweet spot: the ball at shin height as your foot gets there (timing)
+    if (d < best.d) best = { d, tb: t * BALL_TIME };
+  }
+  if (approach) approach.dead = true;
+  if (best.d <= SLIDE_GOOD) pending = { kind: 'SLIDE', at: simTime + best.tb, err: 0, early: false, d: best.d, charge: 1, aim: null, tier: best.d <= SLIDE_PERFECT ? 2 : 1 };
+  else if (best.d < 3) { setMeter(0); showTiming(null, 'WHIFF', null, 'slid past it'); sfx.miss(); }
+}
+// the slide meets the ball: it pops up off your shin like a dig (a fresh turn for your side)
+function doSlideTouch(tier) {
+  if (!ballLive || P.sideOfX(ball.x) !== me.side) return;
+  if (match.poss === me.side && match.cnt >= 3) { endRally(me.side, 'FOUR'); return; }
+  const s = sideSign(me.side);
+  const from = { x: ball.x, y: Math.max(ball.y, 0.3), z: ball.z };
+  const tg = { x: from.x + THREE.MathUtils.clamp(-s * 3.8 - from.x, -1.0, 1.0), z: from.z + THREE.MathUtils.clamp(-from.z, -0.8, 0.8) };
+  const [ox, oz] = jitter(tier === 2 ? 0.3 : 1.4); tg.x += ox; tg.z += oz;
+  setBall(P.solveApex(from, tg, tier === 2 ? 5.6 : 3.9, false));
+  match.lastPart = 'slide';
+  if (match.poss !== me.side) { match.poss = me.side; match.cnt = 0; }
+  match.cnt++;
+  match.last = me.side;
+  match.settled = tier === 2;
+  touchCd = 0.25;
+  const label = tier === 2 ? 'PERFECT' : 'GOOD';
+  setMeter(myMeter + (tier === 2 ? 15 : 5));
+  showTiming(0, label, 'slide', tier === 2 ? 'slide save!' : 'scrappy slide');
+  contactJuice('slide', label, from, true);
+  sfx.touch(match.cnt);
+  sendTouch('slide', label);
+  renderMatchUI();
+}
 let lastZone = '';
 let stepDust = 0;
 
@@ -1594,10 +1662,20 @@ function updateLocal(dt) {
   if (keys.has('KeyD')) right += 1;
   const locked = serveLocked();          // the server stays planted in the circle until the kick
   if (locked) { fwd = 0; right = 0; jumpQueued = false; }
+  if (!slide && (!ballLive || P.sideOfX(ball.x) !== me.side)) slideReady = true;   // the ball went over: slide re-arms
   const sgn = sideSign(me.side);
   const ix = fwd * sgn, iz = right * sgn;
   const len = Math.hypot(ix, iz);
-  {
+  if (slide) {
+    slide.t += dt;
+    if (slide.t < SLIDE_GO) {                                   // sliding: speed bleeds off, no steering
+      const v = SLIDE_V * (1 - slide.t / SLIDE_GO);
+      me.vel.x = slide.dx * v; me.vel.z = slide.dz * v;
+      if (Math.random() < 0.6) fx.dust(me.pos.x, me.pos.z, 3);
+    } else { me.vel.x *= 0.5; me.vel.z *= 0.5; }                 // getting back up
+    if (slide.t >= SLIDE_DUR) slide = null;
+    jumpQueued = false;
+  } else {
     const tx = len ? (ix / len) * WALK : 0, tz = len ? (iz / len) * WALK : 0;
     const a = Math.min(1, (ACCEL * dt) / WALK);
     me.vel.x += (tx - me.vel.x) * a;
@@ -1611,7 +1689,7 @@ function updateLocal(dt) {
   // kill velocity into walls so you don't "stick"
   if (dt > 0) { me.vel.x = (me.pos.x - px) / dt * 0.999 || 0; me.vel.z = (me.pos.z - pz) / dt * 0.999 || 0; }
 
-  if ((keys.has('Space') || jumpQueued) && me.y <= 0 && !locked) { me.vy = JUMP_V; sfx.jump(); fx.dust(me.pos.x, me.pos.z, 18); fx.ring(me.pos.x, me.pos.z, { color: 0x9fb4c8, r: 1.0, life: 0.35, bright: 0.8 }); }
+  if ((keys.has('Space') || jumpQueued) && me.y <= 0 && !locked && !slide) { me.vy = JUMP_V; sfx.jump(); fx.dust(me.pos.x, me.pos.z, 18); fx.ring(me.pos.x, me.pos.z, { color: 0x9fb4c8, r: 1.0, life: 0.35, bright: 0.8 }); }
   jumpQueued = false;
   const wasAir = me.y > 0;
   me.vy -= GRAV * dt;
@@ -1630,6 +1708,8 @@ function updateLocal(dt) {
   }
   animatePlayer(me, speed, dt);
 
+  const sc = document.getElementById('slide-chip');
+  if (sc) { const r = slideReady && !slide; if (sc._r !== r) { sc._r = r; sc.classList.toggle('used', !r); sc.textContent = r ? 'SLIDE · SHIFT' : 'SLIDE USED'; } }
   const zone = updateRing(me);
   if (zone !== lastZone) {
     lastZone = zone;
@@ -1686,7 +1766,7 @@ const ACTION_DUR = 0.34;
 const REACH = 1.0;                // how far (m) from your body you can play the ball
 const BALL_VIS = 3.0;             // drawn much larger than life (≈ the old glow) so it reads from the fixed camera
 const BALL_VR = P.BALL_R * BALL_VIS;
-const BALL_TIME = 0.78;           // ball physics runs at 78% speed — slower, readable rallies
+const BALL_TIME = 0.88;           // ball physics runs at 88% speed (was 78% — a whiffed block shouldn't leave time to fully recover)
 const PERFECT = 0.06;             // perfect window (ball-time seconds)
 const other = (s) => (s === 'left' ? 'right' : 'left');
 const WIN_SCORE = 7;              // first to 7 points takes the game
@@ -2116,7 +2196,7 @@ const match = {
 let simTime = 0, acc = 0, pending = null, touchCd = 0, pointTimer = 0;
 let frozenEnd = null, frozenTimer = 0, rtt = 80;
 const hist = [];
-let jQ = false, kQ = false, fQ = false, lQ = false;
+let jQ = false, kQ = false, fQ = false, lQ = false, sQ = false;
 let cueArmed = true;
 let lastWhoosh = 0;
 let landingCache = null, landingDirty = true;   // ball flight is deterministic: predict once per change
@@ -2139,7 +2219,6 @@ function onActionKey(code) {
   if (mapPreview && !playing) {
     const i = MAPS.findIndex((mp) => mp.id === mapPick.map);
     if (code === 'ArrowDown' || code === 'ArrowUp') { pickMap({ map: MAPS[(i + (code === 'ArrowDown' ? 1 : MAPS.length - 1)) % MAPS.length].id }); return; }
-    if (code === 'ArrowLeft' || code === 'ArrowRight') { pickMap({ time: mapPick.time === 'day' ? 'night' : 'day' }); return; }
     if (code === 'Enter') { mapsGo(); return; }
   }
   if (code === 'KeyH' || code === 'Slash') { toggleHelp(); return; }
@@ -2155,6 +2234,7 @@ function onActionKey(code) {
   if (code === 'KeyK') kQ = true;      // start charging a kick
   if (code === 'KeyL') lQ = true;      // active block at the net
   if (code === 'KeyF') fQ = true;
+  if (code === 'ShiftLeft' || code === 'ShiftRight') sQ = true;   // slide
 }
 function setLanding(v) {
   showLanding = v;
@@ -2267,7 +2347,7 @@ function feintShot(from, side, aimZ, tier) {
   return P.solveApex(from, { x, z: z + oz }, Math.max(from.y + 0.2, 2.1) + (tier === 2 ? 0 : 0.5), true);
 }
 const serveApex = (part, tier) => (part === 'serve-hang' ? (tier === 2 ? 4.6 : 5.0) : (tier === 2 ? 2.45 : 2.9));
-const PART_NAME = { dink: 'Feint', 'serve-snap': 'Snap serve', 'serve-hang': 'Hang serve', clear: 'Clear', smash: 'Smash', ult: 'ULTIMATE SPIN KICK', bicycle: 'Bicycle kick', dheader: 'Diving header', volley: 'Scissor volley', shank: 'Shank', 'serve-power': 'Power serve', foot: 'Inside foot', knee: 'Knee', chest: 'Chest', head: 'Header', kick: 'Kick', spike: 'Spike', serve: 'Serve', toss: 'Toss', body: 'Body', block: 'Block', stuff: 'Stuff block', dig: 'Dig' };
+const PART_NAME = { slide: 'Slide', dink: 'Feint', 'serve-snap': 'Snap serve', 'serve-hang': 'Hang serve', clear: 'Clear', smash: 'Smash', ult: 'ULTIMATE SPIN KICK', bicycle: 'Bicycle kick', dheader: 'Diving header', volley: 'Scissor volley', shank: 'Shank', 'serve-power': 'Power serve', foot: 'Inside foot', knee: 'Knee', chest: 'Chest', head: 'Header', kick: 'Kick', spike: 'Spike', serve: 'Serve', toss: 'Toss', body: 'Body', block: 'Block', stuff: 'Stuff block', dig: 'Dig' };
 
 function jitter(m) {
   const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * m;
@@ -2680,6 +2760,7 @@ function doTouch(kind, err, early, d, chargeAmt = 1, aim = null, forcedTier = nu
   pending = null;
   if (!ballLive) return;
   if (kind === 'DIG') { doDig(forcedTier ?? 2); return; }
+  if (kind === 'SLIDE') { doSlideTouch(forcedTier ?? 1); return; }
   const s = sideSign(me.side);
   const hr = ball.y - me.y;
   const air = me.y > 0.12;
@@ -2890,7 +2971,7 @@ function contactJuice(part, label, at, mine, power = 0) {
   else if (part === 'chest') sfx.chest(pan);
   else if (part === 'body' || part === 'block') sfx.body(pan);
   else if (part === 'stuff') { sfx.spike(1, pan); sfx.body(pan); }
-  else if (part === 'dig') { sfx.chest(pan); sfx.kick(0.5, pan); }
+  else if (part === 'dig' || part === 'slide') { sfx.chest(pan); sfx.kick(0.5, pan); }
   else if (part === 'toss') sfx.toss(pan);
   if (part === 'toss') { fx.emit(at.x, at.y, at.z, { n: 8, color: PAL.cool, speed: 0.8, up: 1, life: 0.4, size: 0.06 }); return; }
   const perfect = label === 'PERFECT';
@@ -3199,6 +3280,7 @@ function updateBall(dt) {
   }
   if (kQ) { kQ = false; tapSwing('K'); }
   if (lQ) { lQ = false; tryBlock(); }
+  if (sQ) { sQ = false; trySlide(); }
   if (fQ) { fQ = false; if (mode === 'solo' && (match.phase === 'idle' || match.phase === 'serve-wait')) feedBall(); }
 
   updateBulletTime(dt);
@@ -3313,7 +3395,7 @@ function onRemoteTouch(msg) {
   match.poss = msg.poss; match.cnt = msg.cnt; match.last = msg.last; match.settled = !!msg.settled;
   match.lastPart = msg.part;
   const who = (teamMode() && playerById(msg.id)) || them;
-  if (who && who !== me) { who.action = { part: msg.part, t: 0 }; if (Number.isFinite(msg.mt)) who.meter = msg.mt; }
+  if (who && who !== me) { if (!(msg.part === 'slide' && who.action && who.action.part === 'slide')) who.action = { part: msg.part, t: 0 }; if (Number.isFinite(msg.mt)) who.meter = msg.mt; }
   if (msg.part === 'ult') ballFire = true;
   renderMeter();
   contactJuice(msg.part, '', ball, false);
@@ -3334,7 +3416,7 @@ function onRemoteMatch(m) {
 }
 
 /* ---------------- contact poses ---------------- */
-const ACTION_DURS = { dig: 0.5, win: 1.0, lose: 1.3, wai: 1.3, celebrate: 1.5, dink: 0.45, 'serve-snap': 0.26, 'serve-hang': 0.6, clear: 0.4, smash: 0.5, ult: 0.85, bicycle: 0.8, dheader: 0.6, volley: 0.5, spike: 0.62, shank: 0.45, 'serve-power': 0.42, block: 0.45, stuff: 0.5 };
+const ACTION_DURS = { slide: SLIDE_DUR, dig: 0.5, win: 1.0, lose: 1.3, wai: 1.3, celebrate: 1.5, dink: 0.45, 'serve-snap': 0.26, 'serve-hang': 0.6, clear: 0.4, smash: 0.5, ult: 0.85, bicycle: 0.8, dheader: 0.6, volley: 0.5, spike: 0.62, shank: 0.45, 'serve-power': 0.42, block: 0.45, stuff: 0.5 };
 // rotate the body around the hips (not the feet) so flips and dives look right
 function hipPivot(p, rx, rz = 0) {
   const h = 0.95;
@@ -3424,6 +3506,16 @@ function actionPose(p, part, e, u = 0) {
       break;
     case 'body':
       hipPivot(p, -0.25 * e); break;
+    case 'slide': {          // feet-first slide: drop low and lean back, lead leg out straight, trailing leg tucked, then get up
+      const k = u < 0.1 ? sstep(u / 0.1) : u < 0.55 ? 1 : 1 - sstep((u - 0.55) / 0.45);
+      hipPivot(p, -1.05 * k);
+      p.body.position.y -= 0.62 * k;
+      L1.hip.rotation.x = -0.5 * k; L1.knee.rotation.x = 0.05;          // lead leg out along the floor
+      L0.hip.rotation.x = 0.1 * k; L0.knee.rotation.x = 1.7 * k;          // trailing leg folded under
+      for (const A of p.arms) { A.sh.rotation.x = 0.7 * k; A.sh.rotation.z = A.sx * 0.7 * k; A.el.rotation.x = -0.3 * k; }
+      if (p.headG) p.headG.rotation.x = -0.5 * k;      // eyes stay on the ball
+      break;
+    }
     case 'dig':              // low lunge under it
       p.body.position.y -= 0.16 * e; hipPivot(p, -0.25 * e);
       L1.hip.rotation.x = -1.05 * e; L1.knee.rotation.x = 0.45; L0.hip.rotation.x = 0.35 * e; L0.knee.rotation.x = 1.25 * e;
@@ -4018,7 +4110,7 @@ function reelStart() {
   setCourtSize('normal');
   const rest = MAPS.map((mp) => mp.id).filter((id) => id !== venue);
   for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
-  reel.order = [venue, ...rest]; reel.i = 0; reel.shot = 0; reel.t = 0; reel.time = timeOfDay || 'night';
+  reel.order = [venue, ...rest]; reel.i = 0; reel.shot = 0; reel.t = 0; reel.time = 'night';
   fadeV = 1; camSm.snap = true;
   reelCaption();
 }
@@ -4039,7 +4131,6 @@ function reelUpdate(dt) {
     reel.t = 0; camSm.snap = true;
     if (++reel.shot >= reelShots(venue).length) {
       reel.shot = 0; reel.i = (reel.i + 1) % reel.order.length;
-      reel.time = reel.time === 'day' ? 'night' : 'day';
       applyArena({ map: reel.order[reel.i], time: reel.time });   // built while the screen is black
       reelCaption();
     }
@@ -4050,7 +4141,7 @@ function reelUpdate(dt) {
 }
 // a dip to black, e.g. when leaving the showreel for a different map
 function dipToBlack() { fadeV = 1; camSm.snap = true; }
-window.__reelAt = (id, s, u, time) => { reelStop(); applyArena({ map: id, time: time || 'day' }); reel.debug = { s, u }; };   // testing hook
+window.__reelAt = (id, s, u, time) => { reelStop(); applyArena({ map: id, time: 'night' }); void time; reel.debug = { s, u }; };   // testing hook
 
 function updateCamera(dt = 1 / 60) {
   if (me && playing) {
@@ -4186,6 +4277,7 @@ function startGame(side) {
   resetAim();
   myMeter = 0; ballFire = false;
   autoQ.cool = 3;
+  slide = null; slideReady = true;
   if (me) me.dispose();
   me = createPlayer(side, myName, 'me', myLook);
   me.pos.copy(spawnPoint(side));
@@ -4230,6 +4322,7 @@ function onRemoteState(msg) {
   them.tele = Number.isFinite(msg.tx) && Number.isFinite(msg.tz) ? { x: msg.tx, z: msg.tz } : null;
   them.aim = Number.isFinite(msg.ax) && Number.isFinite(msg.az) ? { x: msg.ax, z: msg.az } : null;   // their current aim spot
   if (Number.isFinite(msg.mt) && msg.mt !== them.meter) { them.meter = msg.mt; renderMeter(); }
+  remoteSlide(them, msg.sl);
 }
 function wirePos(c) {
   posConn = c;
@@ -4255,7 +4348,7 @@ function wireConnection(c) {
     sendTimer = setInterval(() => {
       if (!me || !conn || !conn.open) return;
       const ch = posConn && posConn.open ? posConn : conn;
-      ch.send({ t: 's', q: posSeq++, mt: Math.round(myMeter), x: +me.pos.x.toFixed(3), z: +me.pos.z.toFixed(3), y: +me.y.toFixed(3),
+      ch.send({ t: 's', q: posSeq++, mt: Math.round(myMeter), sl: slideSeq, x: +me.pos.x.toFixed(3), z: +me.pos.z.toFixed(3), y: +me.y.toFixed(3),
         r: +me.facing.toFixed(3), s: +Math.hypot(me.vel.x, me.vel.z).toFixed(2),
         tx: myTele ? +myTele.x.toFixed(2) : null, tz: myTele ? +myTele.z.toFixed(2) : null,
         ...(() => { const a = aimTarget(me); return { ax: +a.x.toFixed(2), az: +a.z.toFixed(2) }; })() });
@@ -4465,7 +4558,7 @@ const statePkt = (p, id, tele, aim) => ({ t: 's', id, q: (p.seq = (p.seq || 0) +
   tx: tele ? +tele.x.toFixed(2) : null, tz: tele ? +tele.z.toFixed(2) : null, ax: aim ? +aim.x.toFixed(2) : null, az: aim ? +aim.z.toFixed(2) : null });
 function teamTick() {
   if (!me || !playing) return;
-  const mine = statePkt(me, myId, myTele, aimTarget(me));
+  const mine = { ...statePkt(me, myId, myTele, aimTarget(me)), sl: slideSeq };
   if (mode === 'host') {
     // a closed tab doesn't always fire 'close' — 5 s of silence counts as gone
     for (const L of [...links.values()]) if (performance.now() - L.seen > 5000) { teamLeave(L.conn); try { L.conn.close(); } catch {} }
@@ -4485,6 +4578,13 @@ function onTeamState(msg) {
   p.target = { x: n(msg.x), z: n(msg.z), y: n(msg.y), r: n(msg.r), s: n(msg.s) };
   p.tele = Number.isFinite(msg.tx) && Number.isFinite(msg.tz) ? { x: msg.tx, z: msg.tz } : null;
   p.aim = Number.isFinite(msg.ax) && Number.isFinite(msg.az) ? { x: msg.ax, z: msg.az } : null;
+  remoteSlide(p, msg.sl);
+}
+// their slide counter ticked: play the slide (the first packet just sets the baseline)
+function remoteSlide(p, sl) {
+  if (!Number.isFinite(sl) || sl === p.slSeen) return;
+  if (p.slSeen !== undefined) p.action = { part: 'slide', t: 0 };
+  p.slSeen = sl;
 }
 // host: a guest knocks on a team room
 function teamAccept(c) {
@@ -4621,7 +4721,7 @@ function refreshLobbies() {
       c.on('data', (msg) => {
         if (msg && msg.t === 'lobby' && msg.v === PROTOCOL && msg.open && /^[A-Z0-9]{4}$/.test(msg.code || '')) {
           found.push({ code: msg.code, host: String(msg.host || 'Player').slice(0, 14), born: Number(msg.born) || 0,
-            fmt: ['1v1', '2v2', '3v3'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2, map: mapById(msg.map).name, time: msg.time === 'day' ? 'Day' : 'Night' });
+            fmt: ['1v1', '2v2', '3v3'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2, map: mapById(msg.map).name, time: 'Night' });
         }
         end();
       });
@@ -4910,36 +5010,18 @@ if (params.get('code')) ui.code.value = params.get('code').toUpperCase().slice(0
 applyQuality(qualityPref);
 /* ---------------- map picker (home screen + room) ---------------- */
 let roomView = null;                  // a guest's view of the host's map choice
-function renderMapPicker(el, choice, editable) {
+// in a room the map is fixed (picked before Create room): just name it
+function renderMapPicker(el, choice) {
   if (!el) return;
   el.textContent = '';
-  el.classList.toggle('readonly', !editable);
-  const cards = document.createElement('div'); cards.className = 'mp-cards';
-  for (const m of MAPS) {
-    const b = document.createElement('button');
-    b.className = 'mp-card' + (m.id === choice.map ? ' on' : '');
-    b.style.setProperty('--a', m.swatch[0]); b.style.setProperty('--b', m.swatch[1]);
-    const chip = document.createElement('span'); chip.className = 'mp-chip';
-    const nm = document.createElement('span'); nm.className = 'mp-name'; nm.textContent = m.name;
-    b.append(chip, nm);
-    b.title = m.blurb;
-    b.disabled = !editable && m.id !== choice.map;
-    if (editable) b.onclick = () => pickMap({ map: m.id });
-    cards.appendChild(b);
-  }
-  const row = document.createElement('div'); row.className = 'mp-row';
-  for (const [t, label] of [['day', '☀ Day'], ['night', '☾ Night']]) {
-    const b = document.createElement('button'); b.className = 'mp-tod' + (choice.time === t ? ' on' : ''); b.textContent = label;
-    b.disabled = !editable && choice.time !== t;
-    if (editable) b.onclick = () => pickMap({ time: t });
-    row.appendChild(b);
-  }
-  if (editable) {
-    const r = document.createElement('button'); r.className = 'mp-tod rnd'; r.textContent = '🎲 Random';
-    r.onclick = () => pickMap({ map: MAPS[Math.floor(Math.random() * MAPS.length)].id, time: Math.random() < 0.5 ? 'day' : 'night' });
-    row.appendChild(r);
-  }
-  el.append(cards, row);
+  const m = mapById(choice.map);
+  const tag = document.createElement('div'); tag.className = 'mp-fixed';
+  tag.style.setProperty('--a', m.swatch[0]); tag.style.setProperty('--b', m.swatch[1]);
+  const chip = document.createElement('span'); chip.className = 'mp-chip';
+  const nm = document.createElement('b'); nm.textContent = m.name;
+  const tm = document.createElement('small'); tm.textContent = '☾ Night';
+  tag.append(chip, nm, tm);
+  el.appendChild(tag);
 }
 function pickMap(ch) {
   mapPick = cleanChoice(ch.map ?? mapPick.map, ch.time ?? mapPick.time);
@@ -4968,19 +5050,14 @@ function renderMapList() {
   }
   const t = document.getElementById('map-tod');
   t.textContent = '';
-  for (const [tod, label] of [['day', '☀ Day'], ['night', '☾ Night']]) {
-    const b = document.createElement('button'); b.className = 'mp-tod' + (mapPick.time === tod ? ' on' : ''); b.textContent = label;
-    b.onclick = () => pickMap({ time: tod }); t.appendChild(b);
-  }
-  const r = document.createElement('button'); r.className = 'mp-tod rnd'; r.textContent = '🎲';
-  r.title = 'Random map';
-  r.onclick = () => pickMap({ map: MAPS[Math.floor(Math.random() * MAPS.length)].id, time: Math.random() < 0.5 ? 'day' : 'night' });
+  const r = document.createElement('button'); r.className = 'mp-tod rnd'; r.textContent = '🎲 Random';
+  r.onclick = () => pickMap({ map: MAPS[Math.floor(Math.random() * MAPS.length)].id });
   t.appendChild(r);
 }
 function renderPickers() {
   renderMapList();
   const guest = mode === 'guest' && roomView;
-  renderMapPicker(document.getElementById('room-maps'), guest ? roomView : mapPick, !guest);
+  renderMapPicker(document.getElementById('room-maps'), guest ? roomView : mapPick);
 }
 applyArena(mapPick);
 renderPickers();
