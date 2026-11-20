@@ -2,9 +2,9 @@
 
 A 1v1 sepak takraw game in a temple courtyard at dusk, in the browser — three.js, no build step, peer-to-peer multiplayer (PeerJS / WebRTC).
 
-- **Play:** https://takraw.netlify.app (dev preview: https://dev--takraw.netlify.app)
+- **Play:** https://anay-schottlabs.github.io/takraw/
 - **Run locally:** `python3 -m http.server 5173` then open http://localhost:5173
-- **Deploy (free draft):** `netlify deploy --dir . --alias dev` · production: `netlify deploy --prod --dir .` (costs Netlify credits)
+- **Deploy:** push to `main` — GitHub Pages republishes automatically (~1 min)
 
 ## Files
 - `index.html` — page, HUD, How-to-play overlay (generated diagrams)
