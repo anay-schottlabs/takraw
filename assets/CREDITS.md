@@ -15,3 +15,9 @@ Lotus Pond (the 3v3 venue):
 Everything else in the courtyard (halls, galleries, chedis, trees, lanterns, the dusk sky) is generated in code in `main.js`; the pond venue's lotus, koi, salas, chedis, trees, candles and fireflies are generated in `pond.js`.
 
 Riverside Pier, Bangkok Rooftop and Night Market Alley are generated in code (`riverside.js`, `rooftop.js`, `market.js`, shared pieces in `props.js`); they reuse the pond's plank + water textures. Karst Beach, Jungle Waterfall and Bamboo Forest (`beach.js`, `jungle.js`, `bamboo.js`) are generated in code too. Lantern Festival, Palace Garden and Cloud Monastery (`festival.js`, `palace.js`, `monastery.js`) are generated in code (the palace reuses the temple roof tiles).
+
+Temple Courtyard — ULTRA graphics (`temple-ultra.js`, loaded only when Graphics is set to Ultra):
+- `temple-ultra/clay_plaster_*` — "Clay Plaster" (Poly Haven, CC0; 1k diffuse + GL normal) — wall / column / chedi plaster detail (used as greyscale detail, triplanar)
+- `temple-ultra/bark_brown_02_*` — "Bark Brown 02" (Poly Haven, CC0; 512px diffuse + GL normal) — frangipani bark
+- `temple-ultra/leafy_grass_*` — "Leafy Grass" (Poly Haven, CC0; 512px diffuse + GL normal) — the grounds outside the courtyard walls
+Everything else in Ultra (columns, chedis, naga rails, viharns, the great golden chedis, trees, palms, mountains, particles) is generated in code.

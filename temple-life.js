@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeFireflies, makeEmbers, makePeckers, makeFlock, personGeometry } from './life.js';
+import { buildTempleUltra, ultraSurfaces } from './temple-ultra.js';
 
 export function buildTempleLife(ctx) {
   const { F } = ctx;
@@ -89,10 +90,11 @@ export function buildTempleLife(ctx) {
     night.add(ff);
   }
 
-  let time = 0;
+  let time = 0, ultra = null;
   function update(dt) {
     time += dt;
     uTime.value = time;
+    if (ultra && ultra.group.visible) ultra.update(dt, time);
     if (day.visible) {
       pigeons.update(dt, time);
       flock.g.position.set(Math.cos(time * 0.08) * 34, 19 + Math.sin(time * 0.3) * 2, Math.sin(time * 0.08) * 22);
@@ -109,5 +111,13 @@ export function buildTempleLife(ctx) {
     day.visible = tod === 'day';
     night.visible = tod !== 'day';
   }
-  return { g, fx, update, setTime };
+  // ULTRA (see temple-ultra.js): detailed replacements for the courtyard's `lite` pieces, the world beyond the walls, subtle life
+  const out = { g, fx, update, setTime };
+  if (ctx.temple) {
+    out.lite = ctx.temple.lite;
+    out.buildUltra = () => { ultra = buildTempleUltra(ctx, uTime); return ultra.group; };
+    // Ultra sees much further: the golden chedis, viharns and mountains beyond the walls (the fog would swallow them)
+    out.onUltra = (on) => { ultraSurfaces(ctx, on); out.fog = on ? { night: [55, 520] } : undefined; ctx.applyFog(); };
+  }
+  return out;
 }

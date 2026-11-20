@@ -100,13 +100,13 @@ composer.addPass(new OutputPass());
 /* =====================================================================
    Graphics quality — picked on the home screen: Low / High / Ultra
    ===================================================================== */
-// ULTRA isn't switched on yet: until ULTRA_READY, picking Ultra plays exactly like High. When it is, Ultra gets
-// full native resolution, 4096 shadows, 16× anisotropic textures and every map's `buildUltra()` detail
-// (see the ULTRA contract by setVenue).
-const ULTRA_READY = false;
+// ULTRA: full native resolution, 4× MSAA through the post chain (no jagged edges), 4096 shadows, 16× anisotropic
+// textures and every map's `buildUltra()` detail (see the ULTRA contract by setVenue). ULTRA_READY = false makes Ultra
+// play exactly like High.
+const ULTRA_READY = true;
 const QUALITY_HIGH = { dpr: 2, shadow: 2048, soft: true, bloom: true, focus: true, spots: true, particles: 1 };
 const QUALITY = {
-  ultra: ULTRA_READY ? { dpr: 3, shadow: 4096, soft: true, bloom: true, focus: true, spots: true, particles: 1.5, ultra: true, aniso: 16 } : { ...QUALITY_HIGH },
+  ultra: ULTRA_READY ? { dpr: 3, shadow: 4096, soft: true, bloom: true, focus: true, spots: true, particles: 1.5, ultra: true, aniso: 16, msaa: 4 } : { ...QUALITY_HIGH },
   high:  QUALITY_HIGH,
   low:   { dpr: 0.9, shadow: 0, soft: false, bloom: false, focus: false, spots: false, particles: 0.4 },
 };
@@ -123,6 +123,7 @@ function applyQuality(level) {
   renderer.setPixelRatio(dpr);
   composer.setPixelRatio(dpr);
   composer.setSize(window.innerWidth, window.innerHeight);
+  setMSAA(q.msaa || 0);
   bloom.enabled = q.bloom;
   focusPass.enabled = q.focus;
   renderer.shadowMap.enabled = q.shadow > 0;
@@ -139,6 +140,16 @@ function applyQuality(level) {
     scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
   }
   for (const b of document.querySelectorAll('#gfx-toggle button')) b.classList.toggle('on', b.dataset.q === qualityPref);
+}
+// the composer renders into its own targets, so the canvas's antialias does nothing: Ultra multisamples those instead
+let msaaNow = 0;
+function setMSAA(n) {
+  if (n === msaaNow) return;
+  msaaNow = n;
+  const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: n });
+  composer.reset(rt);
+  composer.setPixelRatio(renderer.getPixelRatio());
+  composer.setSize(window.innerWidth, window.innerHeight);
 }
 function setQualityPref(p) {
   if (!QUALITY[p]) return;
@@ -620,7 +631,8 @@ function setVenue(id) {
   const k = venueKey(id);
   if (VENUE_BUILDERS[id] && !venues[k]) {
     const vn = VENUE_BUILDERS[id]({ F, xf, makeBatch, slope, poly, texLoader, glowTexture, ornamentTexture, panelTexture, spotLights,
-      quality: () => QUALITY[qualityLevel] || QUALITY.high, ultra: () => isUltra() });
+      quality: () => QUALITY[qualityLevel] || QUALITY.high, ultra: () => isUltra(),
+      temple: id === 'temple' ? templeGroup.userData : null, applyFog, scene, camera });
     vn.fx.visible = qualityLevel !== 'low';
     scene.add(vn.g);
     venues[k] = vn;
@@ -863,6 +875,10 @@ function buildSurroundings() {
   };
   const decor = makeBatch();      // no shadows
   const boards = makeBatch();     // the boundary balustrade casts + receives shadows (it's inside the shadow frustum)
+  // pieces Ultra rebuilds in far more detail (temple-ultra.js) live in `lite`, which is hidden while Ultra is on
+  const lite = new THREE.Group(); lite.name = 'temple-lite';
+  const liteDecor = makeBatch();
+  const hallLite = [];
 
   // ---- courtyard paving: Poly Haven "Large Grey Tiles", warmed to sandstone ----
   {
@@ -905,11 +921,12 @@ function buildSurroundings() {
     const colTall = new THREE.CylinderGeometry(0.22, 0.27, 4.7, 10);
     const colShort = new THREE.CylinderGeometry(0.2, 0.25, 3.75, 10);
     const cap = new THREE.CylinderGeometry(0.36, 0.24, 0.32, 10);
-    for (const z of [-4.6, -2.6, 2.6, 4.6]) { put(MAT.plaster, colTall, -2.7, 3.35, z); put(MAT.gold, cap, -2.7, 5.66, z); }
+    const putL = (mat, geo, ...t) => hallLite.push([mat, xf(geo, ...t)]);
+    for (const z of [-4.6, -2.6, 2.6, 4.6]) { putL(MAT.plaster, colTall, -2.7, 3.35, z); putL(MAT.gold, cap, -2.7, 5.66, z); }
     put(MAT.red, new THREE.BoxGeometry(0.4, 0.3, 10.4), -2.7, 5.95, 0);
     for (const x of [-2.7, 0, 2.7, 5.4, 8.1, 10.8, 13.0]) for (const sz of [-1, 1]) {
-      put(MAT.plaster, colShort, x, 2.875, sz * 7.7);
-      put(MAT.gold, cap, x, 4.8, sz * 7.7);
+      putL(MAT.plaster, colShort, x, 2.875, sz * 7.7);
+      putL(MAT.gold, cap, x, 4.8, sz * 7.7);
     }
     // roofs: steep main roof, a lower telescoped front tier, and a green skirt tier down each side
     for (const sz of [-1, 1]) {
@@ -949,8 +966,9 @@ function buildSurroundings() {
   for (const s of [-1, 1]) {
     const M = new THREE.Matrix4().makeRotationY(s > 0 ? 0 : Math.PI).setPosition(s * HALL_X, y0, 0);
     for (const [mat, geo] of hall) decor.put(mat, geo.clone().applyMatrix4(M));
+    for (const [mat, geo] of hallLite) liteDecor.put(mat, geo.clone().applyMatrix4(M));
   }
-  for (const [, geo] of hall) geo.dispose();
+  for (const [, geo] of [...hall, ...hallLite]) geo.dispose();
 
   // ---- chedis (bell-shaped stupas) in the four corners behind the galleries ----
   {
@@ -960,8 +978,8 @@ function buildSurroundings() {
     const spire = new THREE.LatheGeometry(V([[0.6, 6.6], [0.62, 6.8], [0.5, 6.8], [0.52, 7.0], [0.42, 7.4], [0.44, 7.6],
       [0.34, 8.0], [0.36, 8.2], [0.26, 8.7], [0.28, 8.9], [0.17, 9.6], [0.12, 10.6], [0.06, 11.6], [0.02, 12.3], [0, 12.5]]), 12);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      decor.put(MAT.plaster, xf(body, sx * 34, y0, sz * 12.8));
-      decor.put(MAT.gold, xf(spire, sx * 34, y0, sz * 12.8));
+      liteDecor.put(MAT.plaster, xf(body, sx * 34, y0, sz * 12.8));
+      liteDecor.put(MAT.gold, xf(spire, sx * 34, y0, sz * 12.8));
     }
   }
 
@@ -970,7 +988,7 @@ function buildSurroundings() {
     const col = new THREE.CylinderGeometry(0.17, 0.2, 3.3, 8);
     for (const sz of [-1, 1]) {
       decor.put(MAT.stone, xf(new THREE.BoxGeometry(53, 0.35, 4.0), 0, y0 + 0.175, sz * 15.75));
-      for (let x = -25; x <= 25.01; x += 2.5) decor.put(MAT.plaster, xf(col, x, y0 + 2.0, sz * 14.1));
+      for (let x = -25; x <= 25.01; x += 2.5) liteDecor.put(MAT.plaster, xf(col, x, y0 + 2.0, sz * 14.1));
       decor.put(MAT.red, xf(new THREE.BoxGeometry(53, 0.28, 0.32), 0, y0 + 3.79, sz * 14.1));
       decor.put(MAT.roofO, xf(slope(-26.5, 26.5, sz * 13.5, 3.85, sz * 17.75, 5.6), 0, y0, 0));
       decor.put(MAT.roofG, xf(slope(-26.5, 26.5, sz * 13.45, 3.88, sz * 14.25, 4.21), 0, y0, 0));   // green border course
@@ -995,13 +1013,13 @@ function buildSurroundings() {
     const sill = new THREE.BoxGeometry(0.56, 0.08, 0.56), light = new THREE.BoxGeometry(0.36, 0.34, 0.36);
     const post = new THREE.BoxGeometry(0.07, 0.36, 0.07), roof = new THREE.ConeGeometry(0.46, 0.42, 4), tip = new THREE.ConeGeometry(0.06, 0.22, 6);
     for (const [x, z] of stoneLanterns) {
-      decor.put(MAT.stone, xf(base, x, y0 + 0.11, z));
-      decor.put(MAT.stone, xf(shaft, x, y0 + 0.67, z));
-      decor.put(MAT.stone, xf(sill, x, y0 + 1.16, z));
-      decor.put(MAT.glow, xf(light, x, y0 + 1.37, z));
-      for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) decor.put(MAT.stone, xf(post, x + dx * 0.22, y0 + 1.38, z + dz * 0.22));
-      decor.put(MAT.red, xf(roof, x, y0 + 1.77, z, Math.PI / 4));
-      decor.put(MAT.gold, xf(tip, x, y0 + 2.09, z));
+      liteDecor.put(MAT.stone, xf(base, x, y0 + 0.11, z));
+      liteDecor.put(MAT.stone, xf(shaft, x, y0 + 0.67, z));
+      liteDecor.put(MAT.stone, xf(sill, x, y0 + 1.16, z));
+      liteDecor.put(MAT.glow, xf(light, x, y0 + 1.37, z));
+      for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) liteDecor.put(MAT.stone, xf(post, x + dx * 0.22, y0 + 1.38, z + dz * 0.22));
+      liteDecor.put(MAT.red, xf(roof, x, y0 + 1.77, z, Math.PI / 4));
+      liteDecor.put(MAT.gold, xf(tip, x, y0 + 2.09, z));
     }
   }
 
@@ -1048,7 +1066,8 @@ function buildSurroundings() {
       lanterns.setMatrixAt(i, _xf.matrix);
       lanterns.setColorAt(i, warm[i % 3]);
     });
-    g.add(lanterns);
+    lite.add(lanterns);
+    g.userData.festoonPts = pts.map((p) => [p.x, p.y - 0.24, p.z]);
   }
 
   // ---- warm light pools on the paving (fake bounce light: one additive instanced draw) ----
@@ -1114,11 +1133,15 @@ function buildSurroundings() {
         _xf.position.set(x, y0, z); _xf.rotation.set(0, i * 2.4, 0); _xf.scale.setScalar(0.95 + (i % 3) * 0.12); _xf.updateMatrix();
         im.setMatrixAt(i, _xf.matrix);
       });
-      g.add(im);
+      lite.add(im);
     }
+    g.userData.trees = trees;
   }
 
   decor.build(g);
+  liteDecor.build(lite);
+  g.add(lite);
+  Object.assign(g.userData, { lite, mats: MAT, y0, stoneLanterns, polePos, HALL_X, POLE });
   boards.build(g, { castShadow: true, receiveShadow: true });
 
   // nothing out here ever moves: compute matrices once and stop updating them every frame
@@ -5065,7 +5088,7 @@ startLobbyBrowser();
 document.getElementById('lobby-refresh').onclick = () => { const el = document.getElementById('lobby-list'); if (el && !probing) el.innerHTML = '<p class="lobby-empty">Looking for games…</p>'; refreshLobbies(); };
 
 // debug hook for automated testing
-window.__takraw = { get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, time: () => timeOfDay, venues: () => venues, mapPick: () => mapPick, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
+window.__takraw = { get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, time: () => timeOfDay, venues: () => venues, mapPick: () => mapPick, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, debugRenderer: () => ({ ...(() => { renderer.info.autoReset = false; renderer.info.reset(); renderer.render(scene, camera); const r = { calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; renderer.info.autoReset = true; return r; })(), msaa: composer.renderTarget1.samples, dpr: renderer.getPixelRatio(), shadow: key.shadow.mapSize.x, quality: qualityLevel }), net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
   // test helpers: an incoming smash from the other side, and the block effects
   debugSmash: (tx, tz, v = 16) => { const sOpp = -sideSign(me.side); setBall(P.solveSpeed({ x: sOpp * 1.2, y: 2.9, z: 0 }, { x: tx, z: tz }, v)); ballLive = true;
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
