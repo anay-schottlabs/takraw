@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeFlyers, makeFireflies, makeEmbers, personGeometry } from './life.js';
+import { buildTerraceUltra } from './terrace-ultra.js';
 
 function rng(seed) { let s = seed >>> 0 || 1; return () => ((s = (s * 16807) % 2147483647) / 2147483647); }
 const smooth = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
@@ -40,6 +41,9 @@ export function buildTerrace(ctx) {
   g.name = 'hill-terrace';
   const fx = new THREE.Group();
   g.add(fx);
+  // pieces Ultra rebuilds (terrace-ultra.js): the flat-shaded terrain, the ridge lines, the two chedi hills
+  const lite = new THREE.Group(); lite.name = 'terrace-lite'; g.add(lite);
+  let cherrySpots = [];
   const R = rng(4242);
   const uTime = { value: 0 };
   const MAT = {
@@ -86,7 +90,7 @@ export function buildTerrace(ctx) {
     ng.computeVertexNormals();
     const terrain = new THREE.Mesh(ng, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true }));
     terrain.receiveShadow = true;
-    g.add(terrain);
+    lite.add(terrain);
     geo.dispose();
   }
 
@@ -112,7 +116,7 @@ export function buildTerrace(ctx) {
       geo.computeVertexNormals();
       const mm = new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true, side: THREE.DoubleSide });
       ranges.push(mm);
-      g.add(new THREE.Mesh(geo, mm));
+      lite.add(new THREE.Mesh(geo, mm));
     };
     range(118, 105, 6, 20, 0x3e3a4e, 11);       // kept low so there's plenty of sky (stars at night) over them
     range(158, 140, 14, 32, 0x5a4766, 23);
@@ -135,10 +139,10 @@ export function buildTerrace(ctx) {
       for (let i = 0; i < hp.count; i++) { const k = 1 + (R() - 0.5) * 0.12; hp.setXYZ(i, hp.getX(i) * k, hp.getY(i), hp.getZ(i) * k); }
       hill.scale(24, 24, 20);
       hill.computeVertexNormals();
-      const hm = new THREE.Mesh(hill, hillMat); hm.position.set(hx, -16, hz); g.add(hm);
+      const hm = new THREE.Mesh(hill, hillMat); hm.position.set(hx, -16, hz); lite.add(hm);
       const top = 7.6;
-      const c1 = new THREE.Mesh(body, goldGlow); c1.position.set(hx, top, hz); c1.scale.setScalar(1.15); g.add(c1);
-      const c2 = new THREE.Mesh(spire, goldGlow); c2.position.copy(c1.position); c2.scale.setScalar(1.15); g.add(c2);
+      const c1 = new THREE.Mesh(body, goldGlow); c1.position.set(hx, top, hz); c1.scale.setScalar(1.15); lite.add(c1);
+      const c2 = new THREE.Mesh(spire, goldGlow); c2.position.copy(c1.position); c2.scale.setScalar(1.15); lite.add(c2);
     }
   }
 
@@ -324,8 +328,9 @@ export function buildTerrace(ctx) {
         spots.push([x, z, 0.85 + R() * 0.4, R() * 6]);
       }
       for (const [x, z] of [[16, 15], [-17, 16], [10, 22], [-9, 24]]) spots.push([x, z, 1.0, R() * 6]);
-      place(mergeGeometries(br), bark, spots);
-      place(mergeGeometries(bl), new THREE.MeshStandardMaterial({ color: 0xf28fb6, emissive: 0x4a1830, roughness: 0.7, flatShading: true }), spots);
+      lite.add(place(mergeGeometries(br), bark, spots));
+      lite.add(place(mergeGeometries(bl), new THREE.MeshStandardMaterial({ color: 0xf28fb6, emissive: 0x4a1830, roughness: 0.7, flatShading: true }), spots));
+      cherrySpots = spots;
     }
     // banana plants
     {
@@ -508,10 +513,11 @@ export function buildTerrace(ctx) {
   solid.build(g, { castShadow: true, receiveShadow: true });
 
   /* ---------------- per-frame life ---------------- */
-  let time = 0;
+  let time = 0, ultra = null;
   function update(dt) {
     time += dt;
     uTime.value = time;
+    if (ultra && ultra.group.visible) ultra.update(dt, time);
     if (dayLife.visible) {
       butterflies.update(dt, time);
       for (const f of farmers) f.body.rotation.x = 0.55 + Math.sin(time * 0.9 + f.ph) * 0.18;      // bent over, planting
@@ -547,5 +553,10 @@ export function buildTerrace(ctx) {
     for (const fl of flocks) fl.g.visible = tod === 'day';
     for (const m of mist) m.m.material.opacity = (tod === 'day' ? 0.1 : 0.2);
   }
-  return { g, fx, update, setTime };
+  // ULTRA (terrace-ultra.js): smooth high-res terraces with moonlit flooded paddies and rice, smooth layered mountains,
+  // and something to look at past each end of the court (river, town, road, hilltop temples)
+  const out = { g, fx, update, setTime, lite };
+  out.buildUltra = () => { ultra = buildTerraceUltra({ ...ctx, heightAt, stepsAt, riseAt, rectDist, PX, PZ, STEP_W, RISER, PLAT_Y, cherrySpots }, uTime); return ultra.group; };
+  out.onUltra = (on) => { out.fog = on ? { night: [70, 720] } : undefined; if (ctx.applyFog) ctx.applyFog(); };
+  return out;
 }

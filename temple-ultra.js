@@ -716,3 +716,5 @@ export function ultraSurfaces(ctx, on) {
     U.uTA.value = on ? b.tA : 0; U.uUpK.value = on ? b.uK : 0;
   }
 }
+
+export { TAU, rng, V3, V2, place, merge, batch, enhance, softTexture };

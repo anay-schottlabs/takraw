@@ -21,3 +21,5 @@ Temple Courtyard — ULTRA graphics (`temple-ultra.js`, loaded only when Graphic
 - `temple-ultra/bark_brown_02_*` — "Bark Brown 02" (Poly Haven, CC0; 512px diffuse + GL normal) — frangipani bark
 - `temple-ultra/leafy_grass_*` — "Leafy Grass" (Poly Haven, CC0; 512px diffuse + GL normal) — the grounds outside the courtyard walls
 Everything else in Ultra (columns, chedis, naga rails, viharns, the great golden chedis, trees, palms, mountains, particles) is generated in code.
+
+Hill Tribe Terrace — ULTRA graphics (`terrace-ultra.js`): generated in code; reuses `temple-ultra/leafy_grass_diff.jpg` as ground detail.

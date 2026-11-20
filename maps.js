@@ -14,6 +14,6 @@ export const MAPS = [
   { id: 'festival', name: 'Lantern Festival', blurb: 'Yi Peng night — sky lanterns rising, khom lantern canopies, drums', swatch: ['#2a1a3a', '#ffa04a'], ui: { a: '#ffa04a', b: '#ffd86a', tint: '#20112a' } },
   { id: 'palace', name: 'Palace Garden', blurb: 'Gilded pavilions, reflecting pools, topiary and guardian giants', swatch: ['#1f4a6a', '#e8b85a'], ui: { a: '#f0c060', b: '#6fb8f0', tint: '#0c1a28' } },
   { id: 'monastery', name: 'Cloud Monastery', blurb: 'A summit monastery above a sea of clouds — golden chedi, naga stairs', swatch: ['#8aa0c0', '#f2f4f8'], ui: { a: '#9ec8ff', b: '#f2c84a', tint: '#121a2a' } },
-  { id: 'terrace', name: 'Hill Tribe Terrace', blurb: 'Rice terraces, a stilt village and misty mountains', swatch: ['#86a63c', '#f2c12e'], ui: { a: '#f2c12e', b: '#ff9ab8', tint: '#18200c' } },
+  { id: 'terrace', ultra: true, name: 'Hill Tribe Terrace', blurb: 'Rice terraces, a stilt village and misty mountains', swatch: ['#86a63c', '#f2c12e'], ui: { a: '#f2c12e', b: '#ff9ab8', tint: '#18200c' } },
 ];
 export const mapById = (id) => MAPS.find((m) => m.id === id) || MAPS[0];
