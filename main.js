@@ -98,21 +98,22 @@ composer.addPass(focusPass);
 composer.addPass(new OutputPass());
 
 /* =====================================================================
-   Graphics quality — Auto starts High and steps down if frames run slow
+   Graphics quality — picked on the home screen: Low / High / Ultra
    ===================================================================== */
+// ULTRA isn't switched on yet: until ULTRA_READY, picking Ultra plays exactly like High. When it is, Ultra gets
+// full native resolution, 4096 shadows, 16× anisotropic textures and every map's `buildUltra()` detail
+// (see the ULTRA contract by setVenue).
+const ULTRA_READY = false;
+const QUALITY_HIGH = { dpr: 2, shadow: 2048, soft: true, bloom: true, focus: true, spots: true, particles: 1 };
 const QUALITY = {
-  // ULTRA — opt-in only (Auto never picks it, and never steps down from it): full native resolution, 4096 shadows,
-  // 16× anisotropic textures, and every map's extra `buildUltra()` detail (see the ULTRA contract by setVenue).
-  ultra:  { dpr: 3,    shadow: 4096, soft: true,  bloom: true,  focus: true,  spots: true,  particles: 1.5, ultra: true, aniso: 16 },
-  high:   { dpr: 2,    shadow: 2048, soft: true,  bloom: true,  focus: true,  spots: true,  particles: 1 },
-  medium: { dpr: 1.25, shadow: 1024, soft: false, bloom: true,  focus: true,  spots: false, particles: 0.7 },
-  low:    { dpr: 0.9,  shadow: 0,    soft: false, bloom: false, focus: false, spots: false, particles: 0.4 },
+  ultra: ULTRA_READY ? { dpr: 3, shadow: 4096, soft: true, bloom: true, focus: true, spots: true, particles: 1.5, ultra: true, aniso: 16 } : { ...QUALITY_HIGH },
+  high:  QUALITY_HIGH,
+  low:   { dpr: 0.9, shadow: 0, soft: false, bloom: false, focus: false, spots: false, particles: 0.4 },
 };
-const QUALITY_ORDER = ['high', 'medium', 'low'];
-let qualityPref = 'auto';
-try { qualityPref = localStorage.getItem('takraw-quality') || 'auto'; } catch {}
+let qualityPref = 'high';
+try { const q = localStorage.getItem('takraw-quality'); qualityPref = QUALITY[q] ? q : q === 'medium' ? 'low' : 'high'; } catch {}   // old Auto → High, old Medium → Low
 let qualityLevel = null;
-const QUALITY_PARTICLES = () => (QUALITY[qualityLevel] || QUALITY.medium).particles;
+const QUALITY_PARTICLES = () => (QUALITY[qualityLevel] || QUALITY.high).particles;
 function applyQuality(level) {
   if (level === qualityLevel) return;
   const q = QUALITY[level];
@@ -137,17 +138,16 @@ function applyQuality(level) {
   if (prevShadow !== renderer.shadowMap.enabled) {
     scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
   }
-  const lbl = document.getElementById('quality-now');
-  if (lbl) lbl.textContent = qualityPref === 'auto' ? `(auto: ${level})` : level === 'ultra' ? '(needs a strong GPU)' : '';
+  for (const b of document.querySelectorAll('#gfx-toggle button')) b.classList.toggle('on', b.dataset.q === qualityPref);
 }
 function setQualityPref(p) {
+  if (!QUALITY[p]) return;
   qualityPref = p;
   try { localStorage.setItem('takraw-quality', p); } catch {}
   qualityLevel = null;
-  applyQuality(p === 'auto' ? 'high' : p);
-  autoQ.cool = 3;
+  applyQuality(p);
 }
-// Auto: average frame time over 2 s windows; step down below ~40 fps (never while loading)
+// FPS readout in the HUD
 const autoQ = { t: 0, n: 0, cool: 3, fpsT: 0, fpsN: 0 };
 function autoQuality(dt) {
   autoQ.fpsT += dt; autoQ.fpsN++;
@@ -156,14 +156,6 @@ function autoQuality(dt) {
     if (el) el.textContent = `${Math.round(autoQ.fpsN / autoQ.fpsT)} FPS`;
     autoQ.fpsT = 0; autoQ.fpsN = 0;
   }
-  if (qualityPref !== 'auto' || document.hidden) return;
-  if (autoQ.cool > 0) { autoQ.cool -= dt; autoQ.t = 0; autoQ.n = 0; return; }
-  autoQ.t += dt; autoQ.n++;
-  if (autoQ.t < 2) return;
-  const avg = autoQ.t / autoQ.n;
-  autoQ.t = 0; autoQ.n = 0;
-  const i = QUALITY_ORDER.indexOf(qualityLevel);
-  if (avg > 1 / 40 && i < QUALITY_ORDER.length - 1) { applyQuality(QUALITY_ORDER[i + 1]); autoQ.cool = 3; }
 }
 
 /* =====================================================================
@@ -628,7 +620,7 @@ function setVenue(id) {
   const k = venueKey(id);
   if (VENUE_BUILDERS[id] && !venues[k]) {
     const vn = VENUE_BUILDERS[id]({ F, xf, makeBatch, slope, poly, texLoader, glowTexture, ornamentTexture, panelTexture, spotLights,
-      quality: () => QUALITY[qualityLevel] || QUALITY.medium, ultra: () => isUltra() });
+      quality: () => QUALITY[qualityLevel] || QUALITY.high, ultra: () => isUltra() });
     vn.fx.visible = qualityLevel !== 'low';
     scene.add(vn.g);
     venues[k] = vn;
@@ -2321,8 +2313,8 @@ function myBall() {
    ball crosses over you. Perfect = stuffed straight back down (brutal to return); good = deflected.  */
 const ATTACKS = new Set(['spike', 'smash', 'ult']);
 const isAttack = (part) => ATTACKS.has(part);
-const RX_R = 1.5;                         // be within this of the landing spot to dig (generous)
-const DIG_GREEN = 0.13, DIG_YELLOW = 0.26;   // green = clean dig, yellow = scrappy dig, beyond = their point   // dig green is a little more generous than the normal meter (0.075)  // dig meter: a much narrower green (and the needle always accelerates)
+const RX_R = 1.35;                        // be within this of the landing spot to dig
+const DIG_GREEN = 0.11, DIG_YELLOW = 0.22;   // green = clean dig, yellow = scrappy dig, beyond = their point (still more generous than the normal meter's 0.075)
 const BLOCK_X = 0.85;                     // body centre this close to the net to block
 const BLOCK_PERFECT = 0.05 * BALL_TIME;   // ±50 ms (real time) around the ball crossing over you
 const BLOCK_GOOD = 0.1 * BALL_TIME;       // ±100 ms
@@ -3651,6 +3643,20 @@ function cpuPickAim(p, ai) {
   p.aim = { x: best.x, z: best.z };            // shows as their red aim spot on your court
   return best;
 }
+// the unbeatable bot reads the defence at the top of its spike jump: if everyone over there has backed
+// off the net to dig the spike, the short court is empty — chip a feint into it, away from the nearest defender
+function cpuFeintOpening(p) {
+  const s = sideSign(p.side);
+  const opp = teamMode() ? allPlayers().filter((q) => q.side !== p.side) : [me].filter(Boolean);
+  if (!opp.length || Math.min(...opp.map((q) => Math.abs(q.pos.x))) < 2.3) return null;   // someone is guarding the net
+  const fx = s * 1.15;   // where a perfect feint drops (just over the net, on their side)
+  let best = null, bestD = -1;
+  for (const z of [-2.2, -1.1, 0, 1.1, 2.2]) {
+    const d = Math.min(...opp.map((q) => Math.hypot(fx - q.pos.x, z - q.pos.z)));
+    if (d > bestD) { bestD = d; best = { x: fx, z }; }
+  }
+  return bestD > 2.0 ? best : null;   // too reachable from where they stand: just spike
+}
 // where (on my side) the ball first drops through height h, if it does
 function cpuIntercept(p, h) {
   const b = P.copyBall(ball), s = sideSign(p.side);
@@ -3898,6 +3904,7 @@ function cpuThink(p, ai, dt) {
           const tier = cpuRollTier(p);
           if (ai.plan === 'dig') { if (ai.digOk) cpuShot(p, ai, 'DIG', 2); }
           else if (ai.plan === 'control' || ai.plan === 'set') cpuShot(p, ai, 'J', tier);
+          else if (ai.plan === 'spike' && cpuMoveNow() === 'mixed' && cpuLvlOf(p) === 'train' && cpuFeintOpening(p)) { ai.cell = cpuFeintOpening(p); cpuShot(p, ai, 'DINK', 2); }
           else if (ai.plan === 'spike' && (cpuMoveNow() === 'feint' || (cpuMoveNow() === 'mixed' && Math.random() < (L.feint || 0)))) cpuShot(p, ai, 'DINK', tier);
           else cpuShot(p, ai, 'K', tier, ai.plan);
           p.tele = null;
@@ -4873,8 +4880,7 @@ $('rematch-btn').onclick = () => { if (isAuthority()) resetMatch(); };
 for (const b of document.querySelectorAll('[data-help]')) b.onclick = () => toggleHelp(true);
 $('howto-close').onclick = () => toggleHelp(false);
 $('opt-landing').checked = showLanding;
-$('opt-quality').value = qualityPref;
-$('opt-quality').onchange = (e) => setQualityPref(e.target.value);
+for (const b of document.querySelectorAll('#gfx-toggle button')) b.onclick = () => setQualityPref(b.dataset.q);
 // bottom controls bar: hidden by default, toggled from the help menu
 let showControls = false;
 try { showControls = localStorage.getItem('takraw-controls') === '1'; } catch {}
@@ -4901,7 +4907,7 @@ ui.code.addEventListener('keydown', (e) => { if (e.key === 'Enter') joinGame(); 
 const params = new URLSearchParams(location.search);
 if (params.get('code')) ui.code.value = params.get('code').toUpperCase().slice(0, 4);
 
-applyQuality(qualityPref === 'auto' ? 'high' : qualityPref);
+applyQuality(qualityPref);
 /* ---------------- map picker (home screen + room) ---------------- */
 let roomView = null;                  // a guest's view of the host's map choice
 function renderMapPicker(el, choice, editable) {

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="75%">
+      <stop offset="0" stop-color="#2a2016"/>
+      <stop offset="1" stop-color="#0b0b0d"/>
+    </radialGradient>
+    <radialGradient id="shade" cx="36%" cy="32%" r="72%">
+      <stop offset="0" stop-color="#fff6c8" stop-opacity=".55"/>
+      <stop offset=".45" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#3a1800" stop-opacity=".6"/>
+    </radialGradient>
+    <clipPath id="ball"><circle cx="256" cy="262" r="168"/></clipPath>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <ellipse cx="256" cy="452" rx="120" ry="16" fill="#000" opacity=".45"/>
+  <g clip-path="url(#ball)">
+    <rect x="80" y="90" width="352" height="352" fill="#f5c02e"/>
+    <g stroke-width="30" fill="none">
+      <path d="M40 160 L300 460 M130 90 L410 410 M250 70 L470 330" stroke="#e2452c"/>
+      <path d="M470 170 L210 470 M380 90 L100 410 M260 70 L40 330" stroke="#2c6fd6"/>
+    </g>
+    <circle cx="256" cy="262" r="168" fill="url(#shade)"/>
+  </g>
+  <circle cx="256" cy="262" r="168" fill="none" stroke="#1a0d04" stroke-opacity=".5" stroke-width="8"/>
+  <ellipse cx="196" cy="186" rx="44" ry="26" transform="rotate(-35 196 186)" fill="#fff" opacity=".45"/>
+</svg>
