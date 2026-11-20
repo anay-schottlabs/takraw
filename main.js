@@ -10,6 +10,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { buildPond } from './pond.js';
 import { buildTerrace } from './terrace.js';
 import { MAPS, mapById } from './maps.js';
+import { makeZone, moveSpectator, spectatorCamera } from './spectate.js';
 import { buildTempleLife } from './temple-life.js';
 import { buildRiverside } from './riverside.js';
 import { buildRooftop } from './rooftop.js';
@@ -51,6 +52,7 @@ const TEAMS = {
   // colours are relative to the viewer: you are always blue, your opponent always red
   me:  { name: 'me',  jersey: 0x3d8bff, trim: 0xf1f6ff, shorts: 0x15161b, css: '#3d8bff' },
   opp: { name: 'opp', jersey: 0xff3b30, trim: 0xfff1ee, shorts: 0x15161b, css: '#ff3b30' },
+  spec: { name: 'spec', jersey: 0x8a8f99, trim: 0xe6e6e6, shorts: 0x2a2c31, css: '#8a8f99' },        // spectators: plain grey kit
   mate: { name: 'mate', jersey: 0x7db4ff, trim: 0xf1f6ff, shorts: 0x15161b, css: '#7db4ff' },   // your teammate (2v2 / 3v3)
 };
 const sideSign = (side) => (side === 'left' ? 1 : -1);
@@ -1262,7 +1264,7 @@ function addRim(mat, strength = 0.28) {
   return mat;
 }
 
-function createPlayer(side, name, teamKey = side, look = null) {
+function createPlayer(side, name, teamKey = side, look = null, plain = false) {
   const team = TEAMS[teamKey];
   const L = sanitizeLook(look || randomLook());
   const root = new THREE.Group();      // world position
@@ -1270,7 +1272,7 @@ function createPlayer(side, name, teamKey = side, look = null) {
   const body = new THREE.Group();      // lean + bob + jump height
   root.add(yaw); yaw.add(body);
 
-  const jerseyCol = new THREE.Color(LOOK_OPTS.jersey[L.jersey]);
+  const jerseyCol = plain ? new THREE.Color(0x5b616c) : new THREE.Color(LOOK_OPTS.jersey[L.jersey]);   // spectators: a plain grey kit
   const lum = jerseyCol.r * 0.3 + jerseyCol.g * 0.59 + jerseyCol.b * 0.11;
   const trimCol = lum > 0.55 ? 0x16181f : 0xf6f1e6;                // contrast trim
   const std = (color, roughness) => addRim(new THREE.MeshStandardMaterial({ color, roughness }));
@@ -1328,11 +1330,10 @@ function createPlayer(side, name, teamKey = side, look = null) {
   const symMat = new THREE.MeshBasicMaterial({ map: symbolTexture(LOOK_OPTS.symbol[L.symbol], trimCol), transparent: true, depthWrite: false });
   const front = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 0.15), symMat);
   front.position.set(0, 1.26, 0.124);
-  body.add(front);
   const back = front.clone();
   back.position.z = -0.124; back.rotation.y = Math.PI; back.position.y = 1.28;
   back.scale.setScalar(1.4);
-  body.add(back);
+  if (!plain) body.add(front, back);
 
   // arms: shoulder → elbow → hand
   const arms = [];
@@ -1374,6 +1375,7 @@ function createPlayer(side, name, teamKey = side, look = null) {
   pool.rotation.x = -Math.PI / 2;
   pool.position.y = 0.008;
   root.add(pool);
+  if (plain) { ring.visible = false; pool.material.color.multiplyScalar(0.45); pool.scale.setScalar(0.7); }   // no team ring; a soft light so they read at night
 
   scene.add(root);
 
@@ -1589,7 +1591,15 @@ let fmt = '1v1';                  // room format chosen by the host
 let roster = [];                  // [{ side, pos: 'front'|'back'|'solo', kind: 'open'|'human'|'cpu', id, name }]
 let myId = 'h';
 const others = new Map();         // id → player (everyone but me) in a team game; `them` points at the opponent in focus
-const teamMode = () => fmt !== '1v1';
+// every online room runs through the host hub (1v1 rooms too — so they can have spectators); only practice / vs CPU don't
+const teamMode = () => fmt !== '1v1' || mode === 'host' || mode === 'guest';
+// SPECTATORS: they're in the room but not on a team. They walk around outside the court (spectate.js) — never in `others`.
+let specs = [];                   // [{ id, name }] — the room's spectators (host keeps it, everyone gets a copy)
+let spec = null;                  // my spectator character, when I'm watching (then `me` is null)
+const specChars = new Map();      // id → the other spectators' characters
+let specZone = null;              // where spectators can walk on this map
+const SPEC_LOOK = { skin: 2, hair: 0, hairColor: 1, jersey: 5, symbol: 0 };   // everyone watches in the same plain kit
+const SPEC_WALK = 3.2;
 const allPlayers = () => [me, ...others.values()].filter(Boolean);
 const onSide = (side) => allPlayers().filter((p) => p.side === side).sort((a, b) => (a.id < b.id ? -1 : 1));
 const playerById = (id) => (me && id === myId ? me : others.get(id) || null);
@@ -1741,10 +1751,67 @@ function updateLocal(dt) {
   }
 }
 
+// spectators stand on the real ground (a step down off the deck onto the paving, etc.)
+function settleOnFloor(p, dt) {
+  const fy = specZone ? specZone.floorY(p.pos.x, p.pos.z) : 0;
+  p.fy = p.fy === undefined ? fy : p.fy + (fy - p.fy) * Math.min(1, dt * 12);
+  p.root.position.y = p.fy;
+}
+// my spectator: WASD walks — W toward the court, S away, A / D around it (the camera always faces the court)
+function updateSpectator(dt) {
+  if (!spec) return;
+  let fwd = 0, right = 0;
+  if (!helpOpen()) {
+    if (keys.has('KeyW') || keys.has('ArrowUp')) fwd += 1;
+    if (keys.has('KeyS') || keys.has('ArrowDown')) fwd -= 1;
+    if (keys.has('KeyA') || keys.has('ArrowLeft')) right -= 1;
+    if (keys.has('KeyD') || keys.has('ArrowRight')) right += 1;
+  }
+  const L0 = Math.hypot(spec.pos.x, spec.pos.z) || 1, fx = -spec.pos.x / L0, fz = -spec.pos.z / L0;
+  let ix = fx * fwd - fz * right, iz = fz * fwd + fx * right;
+  const len = Math.hypot(ix, iz);
+  const tx = len ? (ix / len) * SPEC_WALK : 0, tz = len ? (iz / len) * SPEC_WALK : 0;
+  const a = Math.min(1, (ACCEL * 0.6 * dt) / SPEC_WALK);
+  spec.vel.x += (tx - spec.vel.x) * a; spec.vel.z += (tz - spec.vel.z) * a;
+  const q = { x: spec.pos.x, z: spec.pos.z };
+  if (specZone) moveSpectator(specZone, q, spec.vel.x * dt, spec.vel.z * dt, [...specChars.values()].map((o) => o.pos));
+  if (dt > 0) { spec.vel.x = (q.x - spec.pos.x) / dt; spec.vel.z = (q.z - spec.pos.z) / dt; }
+  spec.pos.x = q.x; spec.pos.z = q.z;
+  const speed = Math.hypot(spec.vel.x, spec.vel.z);
+  const want = speed > 0.3 ? Math.atan2(spec.vel.x, spec.vel.z) : Math.atan2(fx, fz);   // standing still: watch the court
+  let d = want - spec.facing; d = Math.atan2(Math.sin(d), Math.cos(d));
+  spec.facing += d * Math.min(1, dt * (speed > 0.3 ? 12 : 4));
+  animatePlayer(spec, speed, dt);
+  settleOnFloor(spec, dt);
+}
+function clearSpectators() {
+  if (spec) { spec.dispose(); spec = null; }
+  for (const p of specChars.values()) p.dispose();
+  specChars.clear();
+}
+function spawnSpectatorChar(id, name) {
+  const p = createPlayer('left', name, 'spec', SPEC_LOOK, true);
+  p.id = id; p.displayName = name; p.lastSeq = -1;
+  const i = Math.max(0, specs.findIndex((s) => s.id === id));
+  const at = specZone ? specZone.spawn(i) : { x: 0, z: F.outZ + 1.2 };
+  p.pos.set(at.x, 0, at.z);
+  p.facing = Math.atan2(-at.x, -at.z);
+  animatePlayer(p, 0, 0);
+  return p;
+}
+// make the other spectators' characters match the room's list
+function syncSpecChars() {
+  if (!playing) return;
+  const ids = new Set(specs.map((s) => s.id));
+  for (const [id, p] of specChars) if (!ids.has(id) || id === myId) { p.dispose(); specChars.delete(id); }
+  for (const s of specs) if (s.id !== myId && !specChars.has(s.id)) specChars.set(s.id, spawnSpectatorChar(s.id, s.name));
+}
+
 function updateRemote(dt) {
   if (teamMode()) {
     for (const p of others.values()) if (p.kind === 'remote' && p.target) interpRemote(p, dt);
-    them = focusOpponent();
+    for (const p of specChars.values()) { if (p.target) interpRemote(p, dt); else animatePlayer(p, 0, dt); settleOnFloor(p, dt); }
+    them = me ? focusOpponent() : null;
     return;
   }
   if (mode === 'cpu') return;                       // the CPU moves itself (updateCPU)
@@ -1893,6 +1960,7 @@ const oppAimShadow = (() => {
   return g;
 })();
 function updateOppAim(dt) {
+  if (!me) return;                   // spectating
   const t = them && them.aim;
   const theirTurn = !!me && !!them && playing && mode !== 'solo' && (
     ((match.phase === 'serve-wait' || match.phase === 'serve-toss') && match.server === them.side) ||
@@ -1934,6 +2002,7 @@ const dropZone = (() => {
   return { ring, mat, texIn, texOut, line, lineGeo, lineMat, spin: 0 };
 })();
 function updateDropZone(dt) {
+  if (!me) return;                   // spectating
   const D = dropZone;
   const show = !!me && playing && ballLive && match.phase === 'rally' && !!landingCache;
   D.ring.visible = show;
@@ -1986,8 +2055,8 @@ function updateSideGlow(dt) {
   let oc = null;
   if (ballLive && landingCache) {
     const out = landingCache.type === 'board' || !P.inCourt(landingCache.x, landingCache.z);
-    oc = out ? 0xffffff : P.sideOfX(landingCache.x) === me.side ? 0x3d8bff : null;   // blue = coming to you, white = going out, nothing otherwise
-  } else if (side) oc = side === me.side ? 0x3d8bff : null;        // held for the serve, etc.
+    oc = out ? 0xffffff : me && P.sideOfX(landingCache.x) === me.side ? 0x3d8bff : null;   // blue = coming to you, white = going out, nothing otherwise
+  } else if (side) oc = me && side === me.side ? 0x3d8bff : null;        // held for the serve, etc.
   ballOutline.visible = oc !== null;
   if (oc !== null) ballOutline.material.color.set(oc).multiplyScalar(oc === 0xffffff ? 1.6 : 1.4);
   const chip = null;   // (the YOUR / THEIR BALL chip was removed — the ball colour says it)
@@ -2277,6 +2346,7 @@ function onActionKey(code) {
   if (code === 'Escape') { toggleHelp(false); return; }
   if (code === 'KeyN') { setMuted(!sfx.muted); return; }
   if (!playing || helpOpen()) return;
+  if (!me) return;                     // spectators only walk
   if (training && /^(Digit|Numpad)[1-6]$/.test(code)) { setDrill(DRILLS[+code.slice(-1) - 1]); return; }
   if (code === 'ArrowUp') aimStep(1, 0);
   if (code === 'ArrowDown') aimStep(-1, 0);
@@ -2353,6 +2423,7 @@ const aimDot = (() => {
   return { g, ring, spots };
 })();
 function updateAim(dt) {
+  if (!me) return;                   // spectating
   const show = !!me && playing;
   aimDot.g.visible = show;
   aimFlash = Math.max(0, aimFlash - dt);
@@ -2433,6 +2504,7 @@ function findContact(p, pref, past = true, horizon = 0.62) {
 const prefFor = (kind) => (me && me.y > 0.12 ? 1.55 : match.phase === 'serve-toss' ? 1.1 : 0.9);
 
 function myBall() {
+  if (!me) return false;                   // spectating
   if (!me || !ballLive) return false;
   if (match.phase === 'serve-toss') return iServe();
   return match.phase === 'rally' && (P.sideOfX(ball.x) === me.side || (ball.vx * sideSign(me.side) < 0 && Math.abs(ball.x) < 2));
@@ -2472,6 +2544,7 @@ const smashIncoming = () => !!me && ballLive && match.phase === 'rally' && isAtt
 
 // would my jump K right now be a spike / smash? (mirrors doTouch's classification)
 function attackLikely() {
+  if (!me) return false;                   // spectating
   if (!me || match.phase !== 'rally' || me.y <= 0.12) return false;
   const offOwnSet = match.poss === me.side && match.settled;
   const firstTouch = match.poss !== me.side || match.cnt === 0;
@@ -2481,6 +2554,7 @@ function attackLikely() {
 
 // where their attack will come down, if it's in my court
 function digSpot() {
+  if (!me) return null;                   // spectating
   return landingCache && P.sideOfX(landingCache.x) === me.side && P.inCourt(landingCache.x, landingCache.z) ? landingCache : null;
 }
 
@@ -2508,6 +2582,7 @@ const smashMark = (() => {
   return { g, mats: [outer.material, inner.material, halo.material] };
 })();
 function updateSmashMark() {
+  if (!me) return;                   // spectating
   let spot = null;
   const live = smashIncoming();
   if (live) spot = digSpot();
@@ -2525,6 +2600,7 @@ function updateSmashMark() {
 
 // dig meter: only while I'm standing in the mark; same bar, but only green counts
 function updateDigMeter() {
+  if (!me) return;                   // spectating
   const el = $('tm-float');
   const spot = digSpot();
   const inPos = spot && Math.hypot(me.pos.x - spot.x, me.pos.z - spot.z) <= RX_R;
@@ -2695,6 +2771,7 @@ function canSwing() {
 }
 // is the ball actually coming at you right now?
 function ballIncoming() {
+  if (!me) return false;                   // spectating
   return !!me && ballLive && canSwing() &&
     (match.phase === 'serve-toss' || P.sideOfX(ball.x) === me.side || ball.vx * sideSign(me.side) < 0);
 }
@@ -2741,6 +2818,7 @@ function needleAt(r, q) {
   return G_CENTER + (-r) * (G_CENTER / APPROACH_R) * q;   // past the ideal: keeps going at its end speed
 }
 function updateApproach() {
+  if (!me) return;                   // spectating
   const el = $('tm-float');
   myTele = null;
   if (smashIncoming()) { updateDigMeter(); return; }   // their attack: the dig meter takes over
@@ -3089,6 +3167,7 @@ function sendTouchAs(p, part, label = '') {
 
 // a ball that hits your body without a key press still counts (blocks at the net don't)
 function bodyCheck() {
+  if (!me) return;                   // spectating
   if (!me || touchCd > 0 || pending || match.phase !== 'rally') return;
   if (smashIncoming()) return;                          // their attack: only a green dig or an L block stops it
   if (approach && !approach.dead) return;               // you're lined up to play it — not a body touch
@@ -3622,7 +3701,8 @@ const REASON = {
   FOUR: 'Four touches', FOOT: 'Foot fault', DROP: 'Serve dropped', DIG: 'Missed the dig',
 };
 function sideName(side) {
-  if (!me) return '';
+  if (teamMode() && fmt === '1v1') { const p = onSide(side)[0]; if (p) return p === me ? myName : p.displayName || 'Player'; }
+  if (!me) return teamMode() ? (side === 'left' ? 'Blue' : 'Red') : '';
   if (teamMode()) return side === me.side ? 'Blue' : 'Red';
   if (side === me.side) return myName;
   if (mode === 'solo') return 'Ball machine';
@@ -3630,7 +3710,13 @@ function sideName(side) {
 }
 let lastServeAnnounce = -1;
 function renderMatchUI() {
-  if (!me) return;
+  if (!me) {
+    if (!spec) return;
+    // spectators: Blue (left team) on the left, Red on the right
+    $('sc-left').textContent = match.score.left; $('sc-right').textContent = match.score.right;
+    $('srv-left').classList.toggle('on', match.server === 'left'); $('srv-right').classList.toggle('on', match.server === 'right');
+    return;
+  }
   // your score is always on the left, theirs on the right
   $('sc-left').textContent = match.score[me.side];
   $('sc-right').textContent = match.score[other(me.side)];
@@ -3663,10 +3749,11 @@ function onMatchChanged(phase) {
     const mineWon = me && match.winner === me.side;
     const title = mode === 'solo' ? (mineWon ? 'Winner!' : 'Point lost') : `Point ${sideName(match.winner)}`;
     const note = match.mark && match.mark.note ? ` · ${match.mark.note}` : '';
-    showBanner(title, (REASON[match.reason] || '') + note, mineWon ? 'var(--blue)' : 'var(--orange)');
+    showBanner(title, (REASON[match.reason] || '') + note, (me ? mineWon : match.winner === 'left') ? 'var(--blue)' : 'var(--orange)');
     sfx.whistle();
-    if (mineWon) { sfx.cheer(match.reason === 'IN' ? 1 : 0.6); shake(0.2); } else sfx.groan();
-    if (!mineWon && match.reason === 'IN') setMeter(0);   // you missed it: meter empties
+    if (!me) sfx.cheer(match.reason === 'IN' ? 0.8 : 0.5);
+    else if (mineWon) { sfx.cheer(match.reason === 'IN' ? 1 : 0.6); shake(0.2); } else sfx.groan();
+    if (me && !mineWon && match.reason === 'IN') setMeter(0);   // you missed it: meter empties
     if (mineWon && ball) {
       fx.emit(ball.x, 0.3, ball.z, { n: 120, color: PAL.confetti, bright: 1.6, speed: 4, up: 6, life: 1.8, size: 0.12, g: 6 });
       if (me) fx.emit(me.pos.x, 1.2, me.pos.z, { n: 60, color: PAL.confetti, bright: 1.6, speed: 2.5, up: 5, life: 1.5, size: 0.1, g: 6 });
@@ -3728,6 +3815,7 @@ function showTiming(err, label, part, sub = '') {
 }
 const _hv = new THREE.Vector3();
 function updateFloatTiming() {
+  if (!me) return;                   // spectating
   const el = $('tm-float');
   if (!me || floatT <= 0) { el.style.opacity = '0'; return; }
   floatT -= 1 / 60;
@@ -4210,6 +4298,7 @@ function reelUpdate(dt) {
 function dipToBlack() { fadeV = 1; camSm.snap = true; }
 window.__reelAt = (id, s, u, time) => { reelStop(); applyArena({ map: id, time: 'night' }); void time; reel.debug = { s, u }; };   // testing hook
 
+const _specLook = new THREE.Vector3();
 function updateCamera(dt = 1 / 60) {
   if (me && playing) {
     // locked behind your own baseline, framing your whole half and the net
@@ -4217,6 +4306,11 @@ function updateCamera(dt = 1 / 60) {
     const kw = F.W / 7.0;                                   // 1 on the normal court, bigger for 3v3
     camPos.set(-s * (F.hl + 6.9 * kw), 5.3 * kw, 0);
     camLook.set(s * 1.6 * kw, 0.55, 0);
+  } else if (spec && playing) {
+    // spectating: third person behind your character, always looking at the court (leaning a little toward the ball)
+    const bv = ballMesh.visible ? 1 : 0;
+    _specLook.set(ball.x * bv, 0, ball.z * bv);
+    spectatorCamera(specZone, { x: spec.pos.x, z: spec.pos.z }, _specLook, camPos, camLook);
   } else if (mapPreview) {
     // choosing a map: stand exactly where a player stands, looking at the court
     const kw = F.W / 7.0;
@@ -4242,7 +4336,7 @@ function updateCamera(dt = 1 / 60) {
     camSm.pos.copy(camPos); camSm.look.copy(camLook); camSm.snap = false;
   } else {
     // menus: glide between views (showreel → player view on the map screen, → customize close-up, …)
-    const k = reel.on ? 1 : 1 - Math.exp(-dt * 3.2);
+    const k = reel.on ? 1 : 1 - Math.exp(-dt * (spec && playing ? 7 : 3.2));
     camSm.pos.lerp(camPos, k); camSm.look.lerp(camLook, k);
   }
   if (!reel.on && fadeV > 0) fadeV = Math.max(0, fadeV - dt * 1.8);
@@ -4272,7 +4366,8 @@ function updateCamera(dt = 1 / 60) {
 /* =====================================================================
    Networking — PeerJS (WebRTC), no game server
    ===================================================================== */
-const PROTOCOL = 8;   // 8: map + time of day in hello / roster / start / lobby adverts (7: player looks)
+const PROTOCOL = 9;   // 9: every online room is a hub room with a Start button + spectators (lobby lists games to watch)
+const PROTOCOL_8_NOTE = 8;   // 8: map + time of day in hello / roster / start / lobby adverts (7: player looks)
 const PROTOCOL_6_NOTE = 6;   // 6: rooms (1v1 / 2v1 / 2v2) — the guest waits for the host's hello; touches + positions carry a player id
 const PREFIX = 'takraw-iso-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -4346,13 +4441,27 @@ function startGame(side) {
   autoQ.cool = 3;
   slide = null; slideReady = true;
   if (me) me.dispose();
-  me = createPlayer(side, myName, 'me', myLook);
-  me.pos.copy(spawnPoint(side));
+  me = null;
+  clearSpectators();
+  specZone = teamMode() ? makeZone(venue, courtSize, F) : null;
+  if (side) {
+    me = createPlayer(side, myName, 'me', myLook);
+    me.pos.copy(spawnPoint(side));
+  } else {                                   // watching: my spectator steps out somewhere around the court
+    spec = createPlayer('left', myName, 'spec', SPEC_LOOK, true);
+    const at = specZone.spawn(Math.max(0, specs.findIndex((s) => s.id === myId)));
+    spec.pos.set(at.x, 0, at.z);
+    spec.facing = Math.atan2(-at.x, -at.z);
+    $('hint').classList.add('hidden'); lastHint = '';
+    for (const o of [aimDot.g, oppAimShadow, dropZone.ring, timingRing, landMark]) if (o) o.visible = false;
+  }
+  $('hud').classList.toggle('spectating', !me);
   lastZone = '';
   ballLive = false; pending = null; frozenEnd = null; deadBall.on = false;
   Object.assign(match, { phase: mode === 'solo' ? 'idle' : 'wait', score: { left: 0, right: 0 }, poss: null, cnt: 0, last: null, over: false });
   $('gameover').classList.add('hidden');
-  animatePlayer(me, 0, 0);
+  if (me) animatePlayer(me, 0, 0); else animatePlayer(spec, 0, 0);
+  camSm.snap = true;
   updateCamera(0, true);
   showScreen('game');
   ui.ping.textContent = mode === 'solo' ? 'PRACTICE' : mode === 'cpu' ? `VS CPU · ${(LEVEL_NAMES[cpuLevel] || cpuLevel).toUpperCase()}` : `${roomCode} · — ms`;
@@ -4492,25 +4601,33 @@ function buildRoster(f) {
   const L = slots.map(([side, pos]) => ({ side, pos, kind: 'open', id: null, name: '' }));
   // keep the people already in the room (host first)
   const humans = roster.filter((r) => r.kind === 'human');
-  if (!humans.some((h) => h.id === 'h')) humans.unshift({ id: 'h', name: myName, kind: 'human', look: myLook });
+  if (!humans.some((h) => h.id === 'h') && !specs.some((s) => s.id === 'h')) humans.unshift({ id: 'h', name: myName, kind: 'human', look: myLook });
   // host takes their side's back (serving) spot first, then the rest of their side, then the other side
   const order = L.map((_, i) => i).sort((a, b) => (L[a].side === L[b].side ? 0 : L[a].side === 'left' ? -1 : 1) || (L[a].pos === 'back' ? -1 : L[b].pos === 'back' ? 1 : 0));
-  for (const h of humans) { const i = order.find((k) => L[k].kind === 'open'); if (i === undefined) break; Object.assign(L[i], { kind: 'human', id: h.id, name: h.name, look: h.look }); }
+  for (const h of humans) {
+    const i = order.find((k) => L[k].kind === 'open');
+    if (i === undefined) { specs.push({ id: h.id, name: h.name, look: h.look }); continue; }   // a smaller format: the extra people watch
+    Object.assign(L[i], { kind: 'human', id: h.id, name: h.name, look: h.look });
+  }
   return L;
 }
 const rosterPublic = () => roster.map((r) => ({ side: r.side, pos: r.pos, kind: r.kind, id: r.id, name: r.name, look: r.look || null, level: r.level || null }));
-function sendRoster() { if (mode === 'host') netSend({ t: 'roster', fmt, roster: rosterPublic(), map: mapPick.map, time: mapPick.time }); }
+const specsPublic = () => specs.map((s) => ({ id: s.id, name: s.name }));
+function sendRoster() { if (mode === 'host') netSend({ t: 'roster', fmt, roster: rosterPublic(), specs: specsPublic(), map: mapPick.map, time: mapPick.time }); }
+// mid-match: everyone's list of spectators (to add / remove their characters)
+function sendSpecs() { if (mode !== 'host') return; netSend({ t: 'specs', specs: specsPublic() }); syncSpecChars(); }
 function setFormat(f) {
   if (mode !== 'host' || playing || f === fmt) return;
-  const humans = roster.filter((r) => r.kind === 'human').length;
-  const cap = f === '3v3' ? 6 : f === '2v2' ? 4 : 2;
-  if (humans > cap || (f === '1v1' && humans > 1)) return;     // can't squeeze people out
-  fmt = f;
+  fmt = f;                                // (people who don't fit any more become spectators)
   roster = buildRoster(f);
   sendRoster(); renderRoom();
 }
 let cpuSeq = 0;
 function slotAction(i, act) {
+  if (act === 'spec') {                     // move myself to the spectators
+    if (mode !== 'host') { if (conn && conn.open) conn.send({ t: 'spec' }); return; }
+    moveToSpec('h'); sendRoster(); renderRoom(); return;
+  }
   const r = roster[i];
   if (!r) return;
   if (mode !== 'host') { if (act === 'move' && conn && conn.open) conn.send({ t: 'move', i }); return; }
@@ -4525,10 +4642,18 @@ function slotAction(i, act) {
   sendRoster(); renderRoom();
 }
 function moveTo(id, i) {
-  const from = roster.find((r) => r.id === id), to = roster[i];
-  if (!from || !to || to.kind !== 'open') return;
-  Object.assign(to, { kind: 'human', id, name: from.name, look: from.look });
-  Object.assign(from, { kind: 'open', id: null, name: '' });
+  const from = roster.find((r) => r.id === id), sp = specs.find((s) => s.id === id), to = roster[i];
+  if ((!from && !sp) || !to || to.kind !== 'open') return;
+  const who = from || sp;
+  Object.assign(to, { kind: 'human', id, name: who.name, look: who.look });
+  if (from) Object.assign(from, { kind: 'open', id: null, name: '' });
+  else specs = specs.filter((s) => s.id !== id);
+}
+function moveToSpec(id) {
+  const r = roster.find((x) => x.id === id && x.kind === 'human');
+  if (!r || specs.some((s) => s.id === id)) return;
+  specs.push({ id, name: r.name, look: r.look });
+  Object.assign(r, { kind: 'open', id: null, name: '', look: null });
 }
 function renderRoom() {
   const box = $('room');
@@ -4543,8 +4668,9 @@ function renderRoom() {
   $('room-cols').classList.toggle('hidden', !team);
   $('room-start').classList.toggle('hidden', !(host && team));
   if (!team) $('room-fill').classList.add('hidden');
-  $('room-cpu').classList.toggle('hidden', !(host && fmt === '1v1' && !(conn && conn.open)));
-  if (!team) { ui.waitStatus.textContent = host ? (peer && peer.open ? 'Waiting for opponent to join…' : ui.waitStatus.textContent) : ui.waitStatus.textContent; return; }
+  $('room-cpu').classList.toggle('hidden', !(host && fmt === '1v1' && links.size === 0 && !specs.some((s) => s.id === 'h')));
+  if (!team) return;
+  renderSpecs();
   for (const side of ['left', 'right']) {
     const col = $(`room-${side}`);
     col.textContent = '';
@@ -4568,7 +4694,31 @@ function renderRoom() {
   $('room-start').disabled = !ready;
   $('room-fill').classList.toggle('hidden', !(host && open));
   $('room-fill').textContent = `Fill ${open} empty with CPU`;
-  ui.waitStatus.textContent = host ? (open ? 'Open spots: a friend can join, add a CPU, or leave it empty' : 'Everyone’s in') : 'Waiting for the host to start…';
+  const watching = specs.some((s) => s.id === myId);
+  ui.waitStatus.textContent = !(peer && peer.open) && host ? ui.waitStatus.textContent
+    : watching ? (host ? 'You’re spectating — start when the teams are ready' : 'You’re spectating — waiting for the host to start…')
+    : host ? (open ? 'Open spots: a friend can join, add a CPU, or leave it empty — anyone else who joins watches' : 'Everyone’s in — anyone else who joins watches') : 'Waiting for the host to start…';
+}
+function renderSpecs() {
+  const box = $('room-specs');
+  box.classList.remove('hidden');
+  box.textContent = '';
+  const head = document.createElement('div'); head.className = 'room-head spec';
+  head.textContent = `Spectators${specs.length ? ' · ' + specs.length : ''}`;
+  box.appendChild(head);
+  const list = document.createElement('div'); list.className = 'spec-list';
+  for (const s of specs) {
+    const chip = document.createElement('span'); chip.className = 'spec-name' + (s.id === myId ? ' me' : '');
+    chip.textContent = s.name + (s.id === myId ? ' (you)' : s.id === 'h' ? ' (host)' : '');
+    list.appendChild(chip);
+  }
+  if (!specs.length) { const e = document.createElement('span'); e.className = 'spec-empty'; e.textContent = 'Nobody watching yet'; list.appendChild(e); }
+  box.appendChild(list);
+  if (!playing && !specs.some((s) => s.id === myId) && roster.some((r) => r.id === myId)) {
+    const b = document.createElement('button'); b.className = 'rs-btn spec-btn'; b.textContent = 'Spectate';
+    b.onclick = () => slotAction(-1, 'spec');
+    box.appendChild(b);
+  }
 }
 const sideReady = () => ['left', 'right'].every((sd) => roster.some((r) => r.side === sd && r.kind !== 'open'));
 // open spots you don't fill just stay EMPTY (e.g. 2v2 with one spot empty = 2 vs 1)
@@ -4576,16 +4726,17 @@ function teamStart() {
   if (mode !== 'host' || playing || !sideReady()) return;
   const list = rosterPublic().filter((r) => r.kind !== 'open');
   gameMap = { ...mapPick };
-  netSend({ t: 'start', fmt, roster: list, map: gameMap.map, time: gameMap.time });
-  startTeamGame(list);
+  netSend({ t: 'start', fmt, roster: list, specs: specsPublic(), map: gameMap.map, time: gameMap.time });
+  startTeamGame(list, specsPublic());
 }
 function teamFill() {
   if (mode !== 'host' || playing) return;
   for (const r of roster) if (r.kind === 'open') Object.assign(r, { kind: 'cpu', id: 'c' + (++cpuSeq), name: `CPU · ${LEVEL_NAMES[cpuLevel]}`, level: cpuLevel, look: randomLook() });
   sendRoster(); renderRoom();
 }
-function startTeamGame(list) {
+function startTeamGame(list, specList = specs) {
   roster = list;
+  specs = (specList || []).map((s) => ({ id: String(s.id), name: String(s.name || 'Player').slice(0, 14) }));
   // short-handed teams (spots left empty): re-assign positions so the side is still covered
   for (const sd of ['left', 'right']) {
     const mates = list.filter((r) => r.side === sd);
@@ -4594,15 +4745,15 @@ function startTeamGame(list) {
   }
   setCourtSize(fmt === '3v3' ? 'big' : 'normal');
   const mine = list.find((r) => r.id === myId);
-  if (!mine) return;
-  startGame(mine.side);
-  me.id = myId; me.slot = mine.pos;
-  me.pos.copy(teamSpawn(mine.side, mine.pos));
+  if (!mine && !specs.some((s) => s.id === myId)) return;
+  startGame(mine ? mine.side : null);                  // not on a team: watch
+  if (me) { me.id = myId; me.slot = mine.pos; me.pos.copy(teamSpawn(mine.side, mine.pos)); }
   for (const p of others.values()) p.dispose();
   others.clear();
   for (const r of list) {
     if (r.id === myId) continue;
-    const p = createPlayer(r.side, r.name, r.side === mine.side ? 'mate' : 'opp', r.look);
+    // colours are relative to you (blue = your side); a spectator sees the left team blue, the right team red
+    const p = createPlayer(r.side, r.name, mine ? (r.side === mine.side ? 'mate' : 'opp') : (r.side === 'left' ? 'me' : 'opp'), r.look);
     p.id = r.id; p.slot = r.pos; p.displayName = r.name; p.lastSeq = -1;
     p.kind = mode === 'host' && r.kind === 'cpu' ? 'cpu' : 'remote';
     p.pos.copy(teamSpawn(r.side, r.pos));
@@ -4612,8 +4763,9 @@ function startTeamGame(list) {
     animatePlayer(p, 0, 0);
     others.set(p.id, p);
   }
-  them = focusOpponent();
-  ui.ping.textContent = `${roomCode} · ${fmt}`;
+  them = me ? focusOpponent() : null;
+  syncSpecChars();
+  ui.ping.textContent = `${roomCode} · ${fmt}${me ? '' : ' · watching'}`;
   clearInterval(sendTimer); clearInterval(pingTimer);
   sendTimer = setInterval(teamTick, 1000 / 30);
   pingTimer = setInterval(() => netSend({ t: 'ping', ts: performance.now() }), 1500);
@@ -4624,11 +4776,12 @@ const statePkt = (p, id, tele, aim) => ({ t: 's', id, q: (p.seq = (p.seq || 0) +
   r: +p.facing.toFixed(3), s: +Math.hypot(p.vel.x, p.vel.z).toFixed(2),
   tx: tele ? +tele.x.toFixed(2) : null, tz: tele ? +tele.z.toFixed(2) : null, ax: aim ? +aim.x.toFixed(2) : null, az: aim ? +aim.z.toFixed(2) : null });
 function teamTick() {
-  if (!me || !playing) return;
-  const mine = { ...statePkt(me, myId, myTele, aimTarget(me)), sl: slideSeq };
+  if (!(me || spec) || !playing) return;
+  const mine = me ? { ...statePkt(me, myId, myTele, aimTarget(me)), sl: slideSeq } : statePkt(spec, myId, null, null);
   if (mode === 'host') {
     // a closed tab doesn't always fire 'close' — 5 s of silence counts as gone
-    for (const L of [...links.values()]) if (performance.now() - L.seen > 5000) { teamLeave(L.conn); try { L.conn.close(); } catch {} }
+    // (15 s: building a map on a slow machine can stall a guest's tab for several seconds right after the start)
+    for (const L of [...links.values()]) if (performance.now() - L.seen > 15000) { teamLeave(L.conn); try { L.conn.close(); } catch {} }
     const pk = [mine];
     for (const p of others.values()) if (p.kind === 'cpu') pk.push(statePkt(p, p.id, p.tele, p.aim));
     for (const L of links.values()) { const ch = L.pos && L.pos.open ? L.pos : L.conn; if (ch.open) for (const m of pk) ch.send(m); }
@@ -4638,7 +4791,7 @@ function teamTick() {
   }
 }
 function onTeamState(msg) {
-  const p = others.get(msg.id);
+  const p = others.get(msg.id) || specChars.get(msg.id);
   if (!p || p.kind === 'cpu') return;
   if (Number.isFinite(msg.q)) { if (msg.q <= p.lastSeq) return; p.lastSeq = msg.q; }
   const n = (v) => (Number.isFinite(v) ? v : 0);
@@ -4665,29 +4818,37 @@ function teamAccept(c) {
     return;
   }
   c.on('open', () => {
+    // a free spot on a team before the start → play; otherwise (full, or the match is on) → watch
     const slot = playing ? null : roster.find((r) => r.kind === 'open');
-    if (!slot) { c.send({ t: 'full' }); setTimeout(() => { try { c.close(); } catch {} }, 400); return; }
     const id = 'g' + (++guestSeq);
-    Object.assign(slot, { kind: 'human', id, name: 'Player' });
+    if (slot) Object.assign(slot, { kind: 'human', id, name: 'Player' });
+    else specs.push({ id, name: 'Player' });
     links.set(c.peer, { conn: c, pos: null, id, seen: performance.now() });
-    c.send({ t: 'hello', name: myName, v: PROTOCOL, fmt, you: id, look: myLook });
-    sendRoster(); renderRoom();
+    c.send({ t: 'hello', name: myName, v: PROTOCOL, fmt, you: id, look: myLook, spec: !slot });
+    if (playing) {                       // joining a match in progress: straight in as a spectator, caught up on the score + ball
+      c.send({ t: 'start', fmt, roster: rosterPublic(), specs: specsPublic(), map: gameMap.map, time: gameMap.time, late: true });
+      c.send({ t: 'match', m: JSON.parse(JSON.stringify(match)) });
+      if (ballLive) c.send({ t: 'ball', r: match.rally, b: packBall() });
+      sendSpecs();
+    } else { sendRoster(); renderRoom(); }
   });
   c.on('data', (msg) => {
     const L = links.get(c.peer);
     if (!L || !msg || typeof msg !== 'object') return;
     L.seen = performance.now();
     if (msg.t === 'hello') {
-      const r = roster.find((x) => x.id === L.id);
+      const r = roster.find((x) => x.id === L.id), sp = specs.find((x) => x.id === L.id);
       if (r) { r.name = String(msg.name || 'Player').slice(0, 14); if (msg.look) r.look = sanitizeLook(msg.look); }
-      const p = others.get(L.id); if (p) p.displayName = r ? r.name : p.displayName;
-      sendRoster(); renderRoom();
+      if (sp) sp.name = String(msg.name || 'Player').slice(0, 14);
+      const p = others.get(L.id) || specChars.get(L.id); if (p) p.displayName = r ? r.name : sp ? sp.name : p.displayName;
+      if (playing) sendSpecs(); else { sendRoster(); renderRoom(); }
     } else if (msg.t === 's') hostGotState(msg, L);
     else if (msg.t === 'ping') c.send({ t: 'pong', ts: msg.ts });
     else if (msg.t === 'pong' && Number.isFinite(msg.ts)) { rtt = rtt * 0.7 + (performance.now() - msg.ts) * 0.3; ui.ping.textContent = `${roomCode} · ${fmt} · ${Math.round(rtt)} ms`; }
     else if (msg.t === 'touch') { msg.id = L.id; onRemoteTouch(msg); netSend(msg, c); }
     else if (msg.t === 'end') { if (msg.r === match.rally && (msg.loser === 'left' || msg.loser === 'right')) applyPoint(msg.loser, String(msg.reason || 'IN'), msg.mark); }
     else if (msg.t === 'move' && !playing) { moveTo(L.id, msg.i | 0); sendRoster(); renderRoom(); }
+    else if (msg.t === 'spec' && !playing) { moveToSpec(L.id); sendRoster(); renderRoom(); }
   });
   c.on('close', () => teamLeave(c));
   c.on('error', () => {});
@@ -4702,6 +4863,11 @@ function teamLeave(c) {
   const L = links.get(c.peer);
   if (!L) return;
   links.delete(c.peer);
+  if (specs.some((s) => s.id === L.id)) {          // a spectator left
+    specs = specs.filter((s) => s.id !== L.id);
+    if (playing) sendSpecs(); else { sendRoster(); renderRoom(); }
+    return;
+  }
   const r = roster.find((x) => x.id === L.id);
   if (!playing) { if (r) Object.assign(r, { kind: 'open', id: null, name: '' }); sendRoster(); renderRoom(); return; }
   // mid-match: a CPU takes over their spot so the game goes on
@@ -4714,18 +4880,24 @@ function teamLeave(c) {
 function joinRoom(msg) {
   fmt = msg.fmt; myId = String(msg.you || 'g?');
   if (msg.v !== PROTOCOL) setStatus('Host is on a different version — both of you refresh the page');
-  ui.waitStatus.textContent = 'Waiting for the host to start…';
-  renderRoom();
+  clearInterval(pingTimer);                          // keep talking while we wait in the room (the host drops silent guests)
+  pingTimer = setInterval(() => { if (conn && conn.open) conn.send({ t: 'ping', ts: performance.now() }); }, 2000);
+  ui.waitStatus.textContent = msg.spec ? 'You’re spectating — waiting for the host to start…' : 'Waiting for the host to start…';
+  if (!msg.late) renderRoom();
 }
 function onGuestTeamData(msg) {
+  if (msg.t === 'hello') { if (!playing) joinRoom(msg); return; }
+  if (msg.t === 'full') { teardown(); showScreen('home'); showError('That room is full.'); return; }
+  if (msg.t === 'specs') { specs = (msg.specs || []).map((s) => ({ id: String(s.id), name: String(s.name || 'Player').slice(0, 14) })); syncSpecChars(); return; }
+  if (msg.t === 'ball') { if (playing && msg.r === match.rally && Array.isArray(msg.b)) { setBall(unpackBall(msg.b.map((v) => (Number.isFinite(v) ? v : 0)))); ballLive = true; } return; }
   if (msg.t === 'roster') {
     if (!playing) {
-      fmt = msg.fmt; roster = msg.roster || [];
+      fmt = msg.fmt; roster = msg.roster || []; specs = msg.specs || [];
       if (msg.map) { roomView = cleanChoice(msg.map, msg.time); applyArena(roomView); }     // preview the host's map behind the room
       renderRoom(); renderPickers();
     }
   }
-  else if (msg.t === 'start') { if (!playing) { fmt = msg.fmt; gameMap = msg.map ? cleanChoice(msg.map, msg.time) : null; startTeamGame(msg.roster || []); } }
+  else if (msg.t === 'start') { if (!playing) { fmt = msg.fmt; gameMap = msg.map ? cleanChoice(msg.map, msg.time) : null; startTeamGame(msg.roster || [], msg.specs || []); } }
   else if (msg.t === 's') onTeamState(msg);
   else if (msg.t === 'ping') conn.send({ t: 'pong', ts: msg.ts });
   else if (msg.t === 'pong' && Number.isFinite(msg.ts)) { rtt = rtt * 0.7 + (performance.now() - msg.ts) * 0.3; ui.ping.textContent = `${roomCode} · ${fmt} · ${Math.round(rtt)} ms`; }
@@ -4752,8 +4924,9 @@ function claimLobbySlot(i = 0) {
   sp.on('connection', (c) => {
     c.on('open', () => {
       const filled = roster.filter((r) => r.kind !== 'open').length;
-      const open = teamMode() ? !playing && roster.some((r) => r.kind === 'open') : !(conn && conn.open);
-      try { c.send({ t: 'lobby', v: PROTOCOL, code: roomCode, host: myName, open, born: lobbyBorn, fmt, n: filled, cap: roster.length, map: mapPick.map, time: mapPick.time }); } catch {}
+      const join = !playing && roster.some((r) => r.kind === 'open');      // a team spot is free; otherwise you can still watch
+      const m = playing && gameMap ? gameMap.map : mapPick.map;
+      try { c.send({ t: 'lobby', v: PROTOCOL, code: roomCode, host: myName, open: true, join, playing, w: specs.length, born: lobbyBorn, fmt, n: filled, cap: roster.length, map: m, time: 'night' }); } catch {}
       setTimeout(() => { try { c.close(); } catch {} }, 2000);
     });
   });
@@ -4787,7 +4960,7 @@ function refreshLobbies() {
       probeEnders.set(id, end);
       c.on('data', (msg) => {
         if (msg && msg.t === 'lobby' && msg.v === PROTOCOL && msg.open && /^[A-Z0-9]{4}$/.test(msg.code || '')) {
-          found.push({ code: msg.code, host: String(msg.host || 'Player').slice(0, 14), born: Number(msg.born) || 0,
+          found.push({ code: msg.code, host: String(msg.host || 'Player').slice(0, 14), born: Number(msg.born) || 0, join: !!msg.join, playing: !!msg.playing, w: Number(msg.w) || 0,
             fmt: ['1v1', '2v2', '3v3'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2, map: mapById(msg.map).name, time: 'Night' });
         }
         end();
@@ -4810,13 +4983,13 @@ function refreshLobbies() {
 function renderLobbies(list) {
   const el = document.getElementById('lobby-list');
   if (!el) return;
-  list.sort((a, b) => b.born - a.born);
-  const top = list.slice(0, 3);
+  list.sort((a, b) => (b.join - a.join) || (b.born - a.born));          // rooms with a free spot first, then games to watch
+  const top = list.slice(0, 4);
   el.textContent = '';
   if (!top.length) {
     const p = document.createElement('p');
     p.className = 'lobby-empty';
-    p.textContent = 'No open games right now — create one!';
+    p.textContent = 'No games right now — create one!';
     el.appendChild(p);
     return;
   }
@@ -4824,8 +4997,8 @@ function renderLobbies(list) {
     const row = document.createElement('div');
     row.className = 'lobby-row';
     const host = document.createElement('span'); host.className = 'lr-host'; host.textContent = L.host;
-    const code = document.createElement('span'); code.className = 'lr-code'; code.textContent = (L.fmt === '1v1' ? `${L.code}` : `${L.code} · ${L.fmt} · ${L.n}/${L.cap}`) + ` · ${L.map} · ${L.time}`; code.classList.add('team');
-    const btn = document.createElement('button'); btn.className = 'btn outline lr-join'; btn.textContent = 'Join';
+    const code = document.createElement('span'); code.className = 'lr-code'; code.textContent = `${L.code} · ${L.fmt} · ${L.playing ? 'playing' : `${L.n}/${L.cap}`}${L.w ? ` · ${L.w} watching` : ''} · ${L.map}`; code.classList.add('team');
+    const btn = document.createElement('button'); btn.className = 'btn outline lr-join' + (L.join ? '' : ' watch'); btn.textContent = L.join ? 'Join' : 'Watch';
     btn.onclick = () => { ui.code.value = L.code; joinGame(); };
     row.append(host, code, btn);
     el.appendChild(row);
@@ -4838,7 +5011,7 @@ function hostGame(attempt = 0) {
   roomCode = randomCode();
   ui.waitCode.textContent = roomCode;
   ui.waitStatus.textContent = 'Connecting to matchmaking…';
-  fmt = '1v1'; myId = 'h'; roster = buildRoster('1v1');
+  fmt = '1v1'; myId = 'h'; specs = []; roster = buildRoster('1v1');
   showScreen('wait');
   renderRoom();
   peer = newPeer(PREFIX + roomCode);
@@ -4900,7 +5073,9 @@ function teardown() {
   for (const L of links.values()) { try { L.conn.close(); } catch {} try { L.pos && L.pos.close(); } catch {} }
   links.clear();
   if (others.size) { for (const p of others.values()) p.dispose(); others.clear(); them = null; }
-  fmt = '1v1'; roster = []; myId = 'h';
+  fmt = '1v1'; roster = []; myId = 'h'; specs = [];
+  clearSpectators(); specZone = null;
+  $('hud').classList.remove('spectating');
   setCourtSize('normal');
   gameMap = null; roomView = null;
   applyArena(mapPick);                // the menu shows the map you've picked
@@ -5134,7 +5309,7 @@ startLobbyBrowser();
 document.getElementById('lobby-refresh').onclick = () => { const el = document.getElementById('lobby-list'); if (el && !probing) el.innerHTML = '<p class="lobby-empty">Looking for games…</p>'; refreshLobbies(); };
 
 // debug hook for automated testing
-window.__takraw = { get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, time: () => timeOfDay, venues: () => venues, mapPick: () => mapPick, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, debugRenderer: () => ({ ...(() => { renderer.info.autoReset = false; renderer.info.reset(); renderer.render(scene, camera); const r = { calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; renderer.info.autoReset = true; return r; })(), msaa: composer.renderTarget1.samples, dpr: renderer.getPixelRatio(), shadow: key.shadow.mapSize.x, quality: qualityLevel }), net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
+window.__takraw = { setCourt: (sz) => setCourtSize(sz), get spec() { return spec; }, specChars: () => [...specChars.values()].map((p) => ({ x: +p.pos.x.toFixed(2), z: +p.pos.z.toFixed(2) })), get specs() { return specs; }, cam: () => camera.position.toArray().map((v) => +v.toFixed(2)), get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, time: () => timeOfDay, venues: () => venues, mapPick: () => mapPick, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, debugRenderer: () => ({ ...(() => { renderer.info.autoReset = false; renderer.info.reset(); renderer.render(scene, camera); const r = { calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; renderer.info.autoReset = true; return r; })(), msaa: composer.renderTarget1.samples, dpr: renderer.getPixelRatio(), shadow: key.shadow.mapSize.x, quality: qualityLevel }), net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
   // test helpers: an incoming smash from the other side, and the block effects
   debugSmash: (tx, tz, v = 16) => { const sOpp = -sideSign(me.side); setBall(P.solveSpeed({ x: sOpp * 1.2, y: 2.9, z: 0 }, { x: tx, z: tz }, v)); ballLive = true;
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
@@ -5159,7 +5334,7 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);   // up to 10 fps without slowing the game (physics sub-steps handle it)
   const t0 = performance.now();
   autoQuality(dt);
-  if (playing) { updateLocal(dt); updateRemote(dt); updateCPU(dt); updateBall(dt); }
+  if (playing) { updateLocal(dt); updateSpectator(dt); updateRemote(dt); updateCPU(dt); updateBall(dt); }
   else if (pv.p) updatePreview(dt);
   { const cv = currentVenue(); if (cv) cv.update(dt, renderer.getPixelRatio()); }
   if (window.__takrawBot) window.__takrawBot(dt);   // test hook (unused in normal play)

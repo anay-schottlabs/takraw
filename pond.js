@@ -34,7 +34,7 @@ export function buildPond(ctx) {
   g.add(fx);
   const R = rng(20251115);
   const uTime = { value: 0 };
-  const deckX = F.outX + 0.4, deckZ = F.outZ + 0.4;        // the court deck's footprint
+  const deckX = F.outX + 2.0, deckZ = F.outZ + 2.0;        // the court deck's footprint (incl. the spectators' walkway outside the railing)
   const onDeck = (x, z, m = 0) => Math.abs(x) < deckX + m && Math.abs(z) < deckZ + m;
   const SALA_X = 29.0;                                       // front edge of each sala (faces the court)
   const ISLANDS = [[9, 17.5], [-9, -17.5]];
@@ -131,6 +131,14 @@ export function buildPond(ctx) {
   /* ---------------- the court deck: teak skirt + stilts, and a lacquered railing on the ball boundary ---------------- */
   {
     const T = 0.16;
+    // spectators' walkway: a ring of teak boards around the court deck, outside the railing
+    {
+      const in0 = 0.4, BW = 0.32;
+      for (const sz of [-1, 1]) for (let x = -deckX + BW / 2; x < deckX; x += BW + 0.012)     // along the sides (boards run across)
+        solid.put(MAT.teak, xf(new THREE.BoxGeometry(BW, 0.1, deckZ - F.outZ - in0), x, -0.05, sz * (F.outZ + in0 + deckZ) / 2));
+      for (const sx of [-1, 1]) for (let z = -(F.outZ + in0) + BW / 2; z < F.outZ + in0; z += BW + 0.012)   // the ends
+        solid.put(MAT.teak, xf(new THREE.BoxGeometry(deckX - F.outX - in0, 0.1, BW), sx * (F.outX + in0 + deckX) / 2, -0.05, z));
+    }
     for (const [len, x, z, ry] of [[deckX * 2 + T * 2, 0, -deckZ - T / 2, 0], [deckX * 2 + T * 2, 0, deckZ + T / 2, 0],
       [deckZ * 2, -deckX - T / 2, 0, Math.PI / 2], [deckZ * 2, deckX + T / 2, 0, Math.PI / 2]]) {
       solid.put(MAT.teak, xf(new THREE.BoxGeometry(len, 0.34, T), x, -0.17, z, ry));            // fascia board
