@@ -1523,7 +1523,12 @@ function animatePlayer(p, speed, dt) {
   if (p.emote) {                           // spectators' emotes (emotes.js): eased in and out over the normal pose
     p.emote.t += dt;
     const E = EMOTES[p.emote.id];
-    if (!E || p.emote.t >= E.dur) p.emote = null;
+    if (!E || p.emote.t >= E.dur) {          // done: clear the twists / rolls the normal pose never sets
+      p.emote = null;
+      for (const L of p.legs) { L.hip.rotation.y = 0; if (L.foot) L.foot.rotation.set(0, 0, 0); }
+      for (const A of p.arms) { A.sh.rotation.y = 0; A.el.rotation.y = 0; }
+      if (p.headG) p.headG.rotation.z = 0;
+    }
     else {
       const k = sstep(Math.min(p.emote.t / 0.22, (E.dur - p.emote.t) / 0.3, 1));
       poseEmote(p, p.emote.id, p.emote.t, k);
@@ -5410,7 +5415,7 @@ startLobbyBrowser();
 document.getElementById('lobby-refresh').onclick = () => { const el = document.getElementById('lobby-list'); if (el && !probing) el.innerHTML = '<p class="lobby-empty">Looking for games…</p>'; refreshLobbies(); };
 
 // debug hook for automated testing
-window.__takraw = { setCourt: (sz) => setCourtSize(sz), emote: (id) => { const q = spec || pv.p; if (q) { q.emote = { id, t: 0 }; if (q === pv.p) { pv.move = 'emote'; pv.seq = []; } } }, specKey: (c) => specKey(c), get spec() { return spec; }, specChars: () => [...specChars.values()].map((p) => ({ x: +p.pos.x.toFixed(2), z: +p.pos.z.toFixed(2) })), get specs() { return specs; }, cam: () => camera.position.toArray().map((v) => +v.toFixed(2)), get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, time: () => timeOfDay, venues: () => venues, mapPick: () => mapPick, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, debugRenderer: () => ({ ...(() => { renderer.info.autoReset = false; renderer.info.reset(); renderer.render(scene, camera); const r = { calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; renderer.info.autoReset = true; return r; })(), msaa: composer.renderTarget1.samples, dpr: renderer.getPixelRatio(), shadow: key.shadow.mapSize.x, quality: qualityLevel }), net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
+window.__takraw = { setCourt: (sz) => setCourtSize(sz), emote: (id) => { const q = spec || pv.p; if (q) { q.emote = { id, t: 0 }; if (q === pv.p) { pv.move = 'emote'; pv.seq = []; } } }, specKey: (c) => specKey(c), get spec() { return spec; }, specChars: () => [...specChars.values()].map((p) => ({ x: +p.pos.x.toFixed(2), z: +p.pos.z.toFixed(2), y: +p.y.toFixed(2), emote: p.emote ? p.emote.id : null })), get specs() { return specs; }, cam: () => camera.position.toArray().map((v) => +v.toFixed(2)), get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, time: () => timeOfDay, venues: () => venues, mapPick: () => mapPick, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, debugRenderer: () => ({ ...(() => { renderer.info.autoReset = false; renderer.info.reset(); renderer.render(scene, camera); const r = { calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; renderer.info.autoReset = true; return r; })(), msaa: composer.renderTarget1.samples, dpr: renderer.getPixelRatio(), shadow: key.shadow.mapSize.x, quality: qualityLevel }), net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
   // test helpers: an incoming smash from the other side, and the block effects
   debugSmash: (tx, tz, v = 16) => { const sOpp = -sideSign(me.side); setBall(P.solveSpeed({ x: sOpp * 1.2, y: 2.9, z: 0 }, { x: tx, z: tz }, v)); ballLive = true;
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
