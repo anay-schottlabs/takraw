@@ -4111,6 +4111,18 @@ const PROTOCOL = 8;   // 8: map + time of day in hello / roster / start / lobby 
 const PROTOCOL_6_NOTE = 6;   // 6: rooms (1v1 / 2v1 / 2v2) — the guest waits for the host's hello; touches + positions carry a player id
 const PREFIX = 'takraw-iso-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+// ICE servers: STUN finds a direct route between the two players. When two networks can't reach each
+// other directly (phones on mobile data, school / office Wi-Fi, strict NATs) a TURN relay is needed —
+// add one to TURN below. (PeerJS's and Metered's free public relays are both gone.)
+// ?relay=1 forces relay-only (for testing the TURN path).
+const TURN = [];
+const PEER_OPTS = {
+  config: {
+    iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }, ...TURN],
+    ...(new URLSearchParams(location.search).get('relay') === '1' ? { iceTransportPolicy: 'relay' } : {}),
+  },
+};
+const newPeer = (id) => (id ? new Peer(id, PEER_OPTS) : new Peer(PEER_OPTS));
 let peer = null, conn = null, sendTimer = null, pingTimer = null;
 let posConn = null;            // separate unreliable channel for 30 Hz positions (a late packet never blocks touches)
 let posSeq = 0, lastPosSeq = -1;
@@ -4557,7 +4569,7 @@ const LOBBY_SLOTS = 12;
 let slotPeer = null, lobbyBorn = 0;
 function claimLobbySlot(i = 0) {
   if (i >= LOBBY_SLOTS || mode !== 'host' || !peer) return;
-  const sp = new Peer(LOBBY_PREFIX + i);
+  const sp = newPeer(LOBBY_PREFIX + i);
   slotPeer = sp;
   sp.on('error', (e) => {
     if (slotPeer !== sp) return;
@@ -4612,7 +4624,7 @@ function refreshLobbies() {
     }
   };
   if (!probePeer || probePeer.destroyed) {
-    probePeer = new Peer();
+    probePeer = newPeer();
     probePeer.on('open', run);
     probePeer.on('error', (e) => {
       // an empty slot: PeerJS reports it on the peer, naming the id — end that probe right away
@@ -4655,7 +4667,7 @@ function hostGame(attempt = 0) {
   fmt = '1v1'; myId = 'h'; roster = buildRoster('1v1');
   showScreen('wait');
   renderRoom();
-  peer = new Peer(PREFIX + roomCode);
+  peer = newPeer(PREFIX + roomCode);
   peer.on('open', () => { ui.waitStatus.textContent = 'Waiting for opponent to join…'; lobbyBorn = Date.now(); claimLobbySlot(0); renderRoom(); });
   peer.on('connection', (c) => {
     if (teamMode()) { teamAccept(c); return; }
@@ -4683,8 +4695,14 @@ function joinGame() {
   ui.waitCode.textContent = code;
   ui.waitStatus.textContent = 'Joining…';
   showScreen('wait');
-  peer = new Peer();
-  peer.on('open', () => wireConnection(peer.connect(PREFIX + code, { reliable: true, serialization: 'json' })));
+  const me_ = peer = newPeer();
+  peer.on('open', () => { ui.waitStatus.textContent = 'Connecting to host…'; wireConnection(peer.connect(PREFIX + code, { reliable: true, serialization: 'json' })); });
+  // the broker knows the room but no network route opens (blocked by firewall / NAT): don't hang on "Joining…"
+  setTimeout(() => {
+    if (peer !== me_ || mode !== 'guest' || (conn && conn.open)) return;
+    teardown(); showScreen('home');
+    showError(`Couldn't connect to ${code} — the network may be blocking it. Try again, or try another Wi-Fi / mobile data.`);
+  }, 25000);
   peer.on('error', (e) => {
     if (playing) { setStatus('Network error: ' + e.type); return; }
     teardown(); showScreen('home');
