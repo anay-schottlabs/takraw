@@ -12,6 +12,11 @@ export const C = {
   postZ: 3.8,
   netTopMid: 1.52, netTopPost: 1.55, netDepth: 0.7,
   boardH: 0.8,
+  // the game draws the ball much bigger than life (BALL_VIS in main.js): it lands — and hits the boards — when the
+  // DRAWN ball touches, so the call always matches what you saw. Defaults to the real radius (tests / solvers in Node).
+  floorR: BALL_R,
+  // a ball touching the line is IN: the real ball's own radius overlapping the line counts
+  lineIn: BALL_R,
 };
 
 export function netTop(z) {
@@ -20,7 +25,9 @@ export function netTop(z) {
 }
 
 export const sideOfX = (x) => (x < 0 ? 'left' : 'right');
-export const inCourt = (x, z) => Math.abs(x) <= C.hl && Math.abs(z) <= C.hw;
+export const inCourt = (x, z) => Math.abs(x) <= C.hl + C.lineIn && Math.abs(z) <= C.hw + C.lineIn;
+/** How far outside the court a landing is (m): > 0 out, <= 0 in (lines included). */
+export const outBy = (x, z) => Math.max(Math.abs(x) - C.hl, Math.abs(z) - C.hw) - C.lineIn;
 export const copyBall = (b) => ({ x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz });
 
 /**
@@ -63,12 +70,12 @@ export function step(b, dt, ev, opts = {}) {
     }
   }
 
-  if ((Math.abs(b.x) > C.outX || Math.abs(b.z) > C.outZ) && b.y < C.boardH + BALL_R) {
+  if ((Math.abs(b.x) > C.outX - C.floorR || Math.abs(b.z) > C.outZ - C.floorR) && b.y < C.boardH + C.floorR) {
     ev && ev.push({ type: 'board', x: b.x, y: b.y, z: b.z });
     return true;
   }
-  if (b.y <= BALL_R) {
-    b.y = BALL_R;
+  if (b.y <= C.floorR) {
+    b.y = C.floorR;
     ev && ev.push({ type: 'floor', x: b.x, y: b.y, z: b.z });
     return true;
   }

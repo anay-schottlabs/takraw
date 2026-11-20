@@ -414,3 +414,6 @@ button { font-family: inherit; }
 .mp-fixed small { margin-left: auto; color: var(--muted); font-size: 12px; }
 /* menus scroll when they're taller than the window (short laptop screens, phones) */
 #menu { align-items: flex-start; overflow-y: auto; overscroll-behavior: contain; }
+.mp-ultra { display: inline-block; width: 7px; height: 7px; margin-left: 8px; vertical-align: middle; border-radius: 50%; background: #f2c14a; box-shadow: 0 0 6px #f2c14a; }
+.mp-legend { margin: 4px 2px 0; color: var(--muted); font-size: 11.5px; }
+.mp-legend .mp-ultra { margin: 0 4px 0 0; }

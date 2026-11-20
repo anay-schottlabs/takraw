@@ -1789,6 +1789,7 @@ const ACTION_DUR = 0.34;
 const REACH = 1.0;                // how far (m) from your body you can play the ball
 const BALL_VIS = 3.0;             // drawn much larger than life (≈ the old glow) so it reads from the fixed camera
 const BALL_VR = P.BALL_R * BALL_VIS;
+P.C.floorR = BALL_VR;             // the ball lands when the drawn ball touches the floor (see physics.js)
 const BALL_TIME = 0.88;           // ball physics runs at 88% speed (was 78% — a whiffed block shouldn't leave time to fully recover)
 const PERFECT = 0.06;             // perfect window (ball-time seconds)
 const other = (s) => (s === 'left' ? 'right' : 'left');
@@ -2035,6 +2036,34 @@ function flatRing(r0, r1, color, opacity) {
   return m;
 }
 // predicted landing spot
+// BALL MARK: where the deciding ball touched down, shown for the whole point (the size of the real ball's touch, so
+// "does it touch the line?" is exactly the call). White = in, orange-red = out.
+const ballMark = (() => {
+  const g = new THREE.Group();
+  // drawn on top of everything (the dead ball often comes to rest right on it)
+  const M = (geo, color, opacity) => new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, depthTest: false }));
+  const rim = M(new THREE.RingGeometry(P.BALL_R, P.BALL_R + 0.03, 40), 0x0b0d14, 0.9);
+  const dot = M(new THREE.CircleGeometry(P.BALL_R, 40), 0xffffff, 1);
+  const ring = M(new THREE.RingGeometry(0.2, 0.225, 48), 0xffffff, 0.55);
+  const halo = M(new THREE.RingGeometry(0.16, 0.2, 48), 0xffffff, 0.5);
+  for (const m of [rim, dot, ring, halo]) { m.rotation.x = -Math.PI / 2; m.renderOrder = 20; g.add(m); }
+  g.visible = false;
+  scene.add(g);
+  return { g, dot, ring, halo, t: 0 };
+})();
+function updateBallMark(dt) {
+  const mk = match.mark, show = !!me && playing && match.phase === 'point' && !!mk;
+  ballMark.g.visible = show;
+  if (!show) { ballMark.t = 0; return; }
+  ballMark.t += dt;
+  ballMark.g.position.set(mk.x, 0.024, mk.z);
+  const col = mk.out ? 0xff5a3c : 0xffffff;
+  ballMark.dot.material.color.set(col).multiplyScalar(1.6);
+  ballMark.halo.material.color.set(col); ballMark.ring.material.color.set(col);
+  const k = Math.min(1, ballMark.t / 0.25);
+  ballMark.dot.material.opacity = k; ballMark.ring.material.opacity = 0.55 * k;
+  ballMark.halo.scale.setScalar(1 + ballMark.t * 1.6); ballMark.halo.material.opacity = Math.max(0, 0.6 - ballMark.t * 0.6);
+}
 const landMark = new THREE.Group();
 // where the ball will actually land: a clear white ring + dot, drawn above court tints and aim spots
 for (const m of [flatRing(0.3, 0.38, new THREE.Color(0xffffff).multiplyScalar(1.5), 0.95), flatRing(0.0, 0.08, new THREE.Color(0xffffff).multiplyScalar(1.5), 0.95), flatRing(0.38, 0.42, 0x000000, 0.5)]) {
@@ -3133,6 +3162,7 @@ function handleEvent(e) {
     return;
   }
   const half = P.sideOfX(e.x);
+  callMark = e.type === 'floor' ? { x: +e.x.toFixed(3), z: +e.z.toFixed(3), by: +P.outBy(e.x, e.z).toFixed(3) } : null;
   let loser, reason;
   if (e.type === 'wide' || e.type === 'under') { loser = match.last || other(half); reason = e.type === 'wide' ? 'WIDE' : 'UNDER'; }
   else if (match.phase === 'serve-toss') { loser = match.server; reason = 'DROP'; }
@@ -3154,21 +3184,21 @@ function handleEvent(e) {
   if (e.type === 'floor' || e.type === 'board') startDeadBall();
 
   if (decidesHalf(half)) endRally(loser, reason);
-  else { ballLive = false; frozenEnd = { loser, reason }; frozenTimer = 0; }   // the other player's machine calls it
+  else { ballLive = false; frozenEnd = { loser, reason, mark: callMark }; frozenTimer = 0; }   // the other player's machine calls it
 }
 
 function startDeadBall() {
   deadBall.on = true;
   ball.vy = Math.abs(ball.vy) * 0.5;
   ball.vx *= 0.6; ball.vz *= 0.6;
-  ball.y = P.BALL_R;
+  ball.y = BALL_VR;
 }
 function stepDeadBall(dt) {
   if (!deadBall.on) return;
   ball.vy -= P.G * dt;
   ball.x += ball.vx * dt; ball.y += ball.vy * dt; ball.z += ball.vz * dt;
-  if (ball.y <= P.BALL_R) {
-    ball.y = P.BALL_R;
+  if (ball.y <= BALL_VR) {
+    ball.y = BALL_VR;
     if (ball.vy < -0.6) { sfx.bounce(Math.min(0.5, -ball.vy / 10), panOf(ball.x, 0, ball.z)); ball.vy = -ball.vy * 0.5; }
     else ball.vy = 0;
     ball.vx *= 0.8; ball.vz *= 0.8;
@@ -3177,17 +3207,29 @@ function stepDeadBall(dt) {
   if (Math.abs(ball.z) > P.C.outZ - 0.1) ball.vz = -ball.vz * 0.4;
 }
 
+// where the deciding ball landed (shown as a mark on the court during the point, with a "just out" note when close)
+let callMark = null;
 function endRally(loser, reason) {
   ballLive = false; pending = null;
-  if (isAuthority()) applyPoint(loser, reason);
-  else if (conn && conn.open) conn.send({ t: 'end', r: match.rally, loser, reason });
+  const mark = ['IN', 'OUT'].includes(reason) ? callMark : null;
+  callMark = null;
+  if (isAuthority()) applyPoint(loser, reason, mark);
+  else if (conn && conn.open) conn.send({ t: 'end', r: match.rally, loser, reason, mark });
+}
+// "On the line" / "Just in" / "Just out · 6 cm" for close calls (by = metres outside the lines, <= 0 is in)
+function callNote(mk) {
+  if (!mk || !Number.isFinite(mk.by)) return '';
+  if (mk.by > 0) return mk.by <= 0.3 ? `Just out · ${Math.max(1, Math.round(mk.by * 100))} cm` : '';
+  return mk.by > -0.11 ? 'On the line' : mk.by > -0.3 ? 'Just in' : '';
 }
 
-function applyPoint(loser, reason) {
+function applyPoint(loser, reason, mark = null) {
   if (!['rally', 'serve-toss', 'serve-wait'].includes(match.phase)) return;
   const winner = other(loser);
   match.score[winner]++;
   match.winner = winner; match.reason = reason;
+  const mk = mark && Number.isFinite(mark.x) && Number.isFinite(mark.z) ? { x: +mark.x, z: +mark.z, by: +mark.by || 0 } : null;
+  match.mark = mk ? { ...mk, out: reason === 'OUT', note: callNote(mk) } : null;
   if (mode !== 'solo') {
     match.serveCount++;
     if (match.serveCount >= 3) { match.serveCount = 0; match.server = other(match.server); if (teamMode()) pickServer(match.server); }
@@ -3317,7 +3359,7 @@ function updateBall(dt) {
 
   if (frozenEnd && isAuthority()) {
     frozenTimer += dt;
-    if (frozenTimer > 3) { const f = frozenEnd; frozenEnd = null; applyPoint(f.loser, f.reason); }
+    if (frozenTimer > 3) { const f = frozenEnd; frozenEnd = null; applyPoint(f.loser, f.reason, f.mark); }
   }
   if (match.phase === 'point' && isAuthority()) {
     pointTimer -= dt;
@@ -3372,6 +3414,7 @@ function renderBall(dt) {
     // (separate landing marker retired — the aim markers slide to the real landing spot instead)
   }
   landMark.rotation.y += dt * 2;
+  updateBallMark(dt);
   if (me) updateSmashMark();
 
   // timing ring: shows how long until the sweet spot (if the ball will come into reach)
@@ -3619,7 +3662,8 @@ function onMatchChanged(phase) {
     }, 250);
     const mineWon = me && match.winner === me.side;
     const title = mode === 'solo' ? (mineWon ? 'Winner!' : 'Point lost') : `Point ${sideName(match.winner)}`;
-    showBanner(title, REASON[match.reason] || '', mineWon ? 'var(--blue)' : 'var(--orange)');
+    const note = match.mark && match.mark.note ? ` · ${match.mark.note}` : '';
+    showBanner(title, (REASON[match.reason] || '') + note, mineWon ? 'var(--blue)' : 'var(--orange)');
     sfx.whistle();
     if (mineWon) { sfx.cheer(match.reason === 'IN' ? 1 : 0.6); shake(0.2); } else sfx.groan();
     if (!mineWon && match.reason === 'IN') setMeter(0);   // you missed it: meter empties
@@ -4405,7 +4449,7 @@ function wireConnection(c) {
     } else if (msg.t === 'match' && mode === 'guest') {
       onRemoteMatch(msg.m);
     } else if (msg.t === 'end' && mode === 'host') {
-      if (msg.r === match.rally && (msg.loser === 'left' || msg.loser === 'right')) applyPoint(msg.loser, String(msg.reason || 'IN'));
+      if (msg.r === match.rally && (msg.loser === 'left' || msg.loser === 'right')) applyPoint(msg.loser, String(msg.reason || 'IN'), msg.mark);
     } else if (msg.t === 'rematch' && mode === 'host') {
       resetMatch();
     } else if (msg.t === 'full') {
@@ -4642,7 +4686,7 @@ function teamAccept(c) {
     else if (msg.t === 'ping') c.send({ t: 'pong', ts: msg.ts });
     else if (msg.t === 'pong' && Number.isFinite(msg.ts)) { rtt = rtt * 0.7 + (performance.now() - msg.ts) * 0.3; ui.ping.textContent = `${roomCode} · ${fmt} · ${Math.round(rtt)} ms`; }
     else if (msg.t === 'touch') { msg.id = L.id; onRemoteTouch(msg); netSend(msg, c); }
-    else if (msg.t === 'end') { if (msg.r === match.rally && (msg.loser === 'left' || msg.loser === 'right')) applyPoint(msg.loser, String(msg.reason || 'IN')); }
+    else if (msg.t === 'end') { if (msg.r === match.rally && (msg.loser === 'left' || msg.loser === 'right')) applyPoint(msg.loser, String(msg.reason || 'IN'), msg.mark); }
     else if (msg.t === 'move' && !playing) { moveTo(L.id, msg.i | 0); sendRoster(); renderRoom(); }
   });
   c.on('close', () => teamLeave(c));
@@ -5064,6 +5108,7 @@ function renderMapList() {
     const chip = document.createElement('span'); chip.className = 'mp-swatch';
     const tx = document.createElement('span'); tx.className = 'mp-text';
     const nm = document.createElement('b'); nm.textContent = m.name;
+    if (m.ultra) { const d = document.createElement('i'); d.className = 'mp-ultra'; nm.appendChild(d); }
     const bl = document.createElement('small'); bl.textContent = m.blurb;
     tx.append(nm, bl); b.append(chip, tx);
     b.onclick = () => pickMap({ map: m.id });
@@ -5071,6 +5116,7 @@ function renderMapList() {
     el.appendChild(b);
     if (m.id === mapPick.map) setTimeout(() => b.scrollIntoView({ block: 'nearest' }), 0);
   }
+  if (MAPS.some((m) => m.ultra)) { const lg = document.createElement('p'); lg.className = 'mp-legend'; lg.innerHTML = '<i class="mp-ultra"></i> Ultra detail — set Graphics to Ultra'; el.appendChild(lg); }
   const t = document.getElementById('map-tod');
   t.textContent = '';
   const r = document.createElement('button'); r.className = 'mp-tod rnd'; r.textContent = '🎲 Random';
@@ -5093,6 +5139,10 @@ window.__takraw = { get me() { return me; }, get them() { return them; }, get ot
   debugSmash: (tx, tz, v = 16) => { const sOpp = -sideSign(me.side); setBall(P.solveSpeed({ x: sOpp * 1.2, y: 2.9, z: 0 }, { x: tx, z: tz }, v)); ballLive = true;
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
   debugBlock: (stuffed = true) => blockedJuice({ x: 0, y: 1.7, z: 0.4 }, stuffed),
+  // test helper: launch the ball from an exact state with a given match state, then read the call (match.reason / winner)
+  debugShot: (b, m = {}) => { setBall(b); ballLive = true; frozenEnd = null; deadBall.on = false; pending = null; landingDirty = true; hist.length = 0;
+    Object.assign(match, { phase: 'rally', poss: 'left', cnt: 1, last: 'left', lastPart: 'kick', settled: false, winner: null, reason: '' }, m); },
+  callNow: () => ({ phase: match.phase, winner: match.winner, reason: match.reason, live: ballLive, ball: { x: +ball.x.toFixed(3), y: +ball.y.toFixed(3), z: +ball.z.toFixed(3) } }),
   outline: () => (ballOutline.visible ? '#' + ballOutline.material.color.getHexString() : null),
   myDot: () => ({ x: +aimDot.g.position.x.toFixed(2), z: +aimDot.g.position.z.toFixed(2) }),
   oppAim: () => ({ visible: oppAimShadow.visible, x: +oppAimShadow.position.x.toFixed(2), z: +oppAimShadow.position.z.toFixed(2) }),
