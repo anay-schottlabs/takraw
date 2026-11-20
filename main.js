@@ -11,6 +11,7 @@ import { buildPond } from './pond.js';
 import { buildTerrace } from './terrace.js';
 import { MAPS, mapById } from './maps.js';
 import { makeZone, moveSpectator, spectatorCamera } from './spectate.js';
+import { EMOTES, poseEmote } from './emotes.js';
 import { buildTempleLife } from './temple-life.js';
 import { buildRiverside } from './riverside.js';
 import { buildRooftop } from './rooftop.js';
@@ -1313,7 +1314,7 @@ function createPlayer(side, name, teamKey = side, look = null, plain = false) {
     M(new THREE.BoxGeometry(0.102, 0.03, 0.08), shoeAcc, foot, 0, -0.005, -0.04);                // heel
     M(new THREE.BoxGeometry(0.104, 0.012, 0.18), shoeAcc, foot, sx * 0.0, -0.035, 0.07).scale.x = 1.02;   // stripe
     M(new THREE.BoxGeometry(0.104, 0.02, 0.255), sole, foot, 0, -0.065, 0.045);
-    legs.push({ hip, knee });
+    legs.push({ hip, knee, foot });
   }
 
   // pelvis + torso (a touch narrower at the waist)
@@ -1517,6 +1518,15 @@ function animatePlayer(p, speed, dt) {
       // quick snap in, short hold, eased follow-through out
       const e = u < 0.25 ? sstep(u / 0.25) : u < 0.45 ? 1 : 1 - sstep((u - 0.45) / 0.55);
       actionPose(p, p.action.part, e, u);
+    }
+  }
+  if (p.emote) {                           // spectators' emotes (emotes.js): eased in and out over the normal pose
+    p.emote.t += dt;
+    const E = EMOTES[p.emote.id];
+    if (!E || p.emote.t >= E.dur) p.emote = null;
+    else {
+      const k = sstep(Math.min(p.emote.t / 0.22, (E.dur - p.emote.t) / 0.3, 1));
+      poseEmote(p, p.emote.id, p.emote.t, k);
     }
   }
   p.yaw.rotation.y = p.facing;
@@ -1761,14 +1771,14 @@ function settleOnFloor(p, dt) {
 function updateSpectator(dt) {
   if (!spec) return;
   let fwd = 0, right = 0;
-  if (!helpOpen()) {
+  if (!helpOpen() && !spec.emote) {
     if (keys.has('KeyW') || keys.has('ArrowUp')) fwd += 1;
     if (keys.has('KeyS') || keys.has('ArrowDown')) fwd -= 1;
     if (keys.has('KeyA') || keys.has('ArrowLeft')) right -= 1;
     if (keys.has('KeyD') || keys.has('ArrowRight')) right += 1;
   }
-  const L0 = Math.hypot(spec.pos.x, spec.pos.z) || 1, fx = -spec.pos.x / L0, fz = -spec.pos.z / L0;
-  let ix = fx * fwd - fz * right, iz = fz * fwd + fx * right;
+  const L0 = Math.hypot(spec.pos.x, spec.pos.z) || 1, cx = -spec.pos.x / L0, cz = -spec.pos.z / L0;   // toward the court
+  let ix = cx * fwd - cz * right, iz = cz * fwd + cx * right;
   const len = Math.hypot(ix, iz);
   const tx = len ? (ix / len) * SPEC_WALK : 0, tz = len ? (iz / len) * SPEC_WALK : 0;
   const a = Math.min(1, (ACCEL * 0.6 * dt) / SPEC_WALK);
@@ -1777,12 +1787,26 @@ function updateSpectator(dt) {
   if (specZone) moveSpectator(specZone, q, spec.vel.x * dt, spec.vel.z * dt, [...specChars.values()].map((o) => o.pos));
   if (dt > 0) { spec.vel.x = (q.x - spec.pos.x) / dt; spec.vel.z = (q.z - spec.pos.z) / dt; }
   spec.pos.x = q.x; spec.pos.z = q.z;
+  const wasAir = spec.y > 0;
+  spec.vy -= GRAV * dt; spec.y = Math.max(0, spec.y + spec.vy * dt);
+  if (spec.y === 0 && spec.vy < 0) { spec.vy = 0; if (wasAir) fx.dust(spec.pos.x, spec.pos.z, 8); }
   const speed = Math.hypot(spec.vel.x, spec.vel.z);
-  const want = speed > 0.3 ? Math.atan2(spec.vel.x, spec.vel.z) : Math.atan2(fx, fz);   // standing still: watch the court
+  const want = speed > 0.3 ? Math.atan2(spec.vel.x, spec.vel.z) : Math.atan2(cx, cz);   // standing still: watch the court
   let d = want - spec.facing; d = Math.atan2(Math.sin(d), Math.cos(d));
-  spec.facing += d * Math.min(1, dt * (speed > 0.3 ? 12 : 4));
+  if (!spec.emote) spec.facing += d * Math.min(1, dt * (speed > 0.3 ? 12 : 4));
   animatePlayer(spec, speed, dt);
   settleOnFloor(spec, dt);
+}
+// spectators: Space jumps, 1–0 emote — only on the ground, and an emote holds you still until it ends
+let specEmoteSeq = 0;
+function specKey(code) {
+  if (!spec) return;
+  const m = /^(?:Digit|Numpad)(\d)$/.exec(code);
+  if (m && !spec.emote && spec.y <= 0) {
+    const id = (+m[1] + 9) % 10;                 // 1 → 0 … 9 → 8, 0 → 9
+    spec.emote = { id, t: 0 }; spec.vel.set(0, 0, 0); specEmoteSeq++; spec.emoteId = id;
+  }
+  if (code === 'Space' && !spec.emote && spec.y <= 0) spec.vy = JUMP_V * 0.72;
 }
 function clearSpectators() {
   if (spec) { spec.dispose(); spec = null; }
@@ -2346,7 +2370,7 @@ function onActionKey(code) {
   if (code === 'Escape') { toggleHelp(false); return; }
   if (code === 'KeyN') { setMuted(!sfx.muted); return; }
   if (!playing || helpOpen()) return;
-  if (!me) return;                     // spectators only walk
+  if (!me) { specKey(code); return; }  // spectators: walk, jump, emote
   if (training && /^(Digit|Numpad)[1-6]$/.test(code)) { setDrill(DRILLS[+code.slice(-1) - 1]); return; }
   if (code === 'ArrowUp') aimStep(1, 0);
   if (code === 'ArrowDown') aimStep(-1, 0);
@@ -4382,7 +4406,25 @@ const PEER_OPTS = {
     ...(new URLSearchParams(location.search).get('relay') === '1' ? { iceTransportPolicy: 'relay' } : {}),
   },
 };
-const newPeer = (id) => (id ? new Peer(id, PEER_OPTS) : new Peer(PEER_OPTS));
+const newPeer = (id) => keepBroker(id ? new Peer(id, PEER_OPTS) : new Peer(PEER_OPTS));
+// The broker (signalling server) socket drops now and then: a Wi-Fi blip, a sleeping laptop, a background tab whose
+// heartbeat timer got throttled. PeerJS then fires a 'network' error and goes 'disconnected', but every P2P link that is
+// already open keeps working — so re-register with the broker under the same id (with backoff) instead of giving up.
+const BROKER_ERRS = new Set(['network', 'disconnected', 'socket-error', 'socket-closed', 'server-error']);
+function keepBroker(p) {
+  let tries = 0;
+  p.on('open', () => { tries = 0; });
+  p.on('disconnected', () => {
+    setTimeout(() => { if (!p.destroyed && p.disconnected) try { p.reconnect(); } catch {} }, Math.min(10000, 1000 * 2 ** tries++));
+  });
+  return p;
+}
+// PeerJS's `reliable: false` only makes a channel UNORDERED — lost packets are still retransmitted. Positions are replaced
+// 30x a second, so a late one is useless: make the 'pos' channel truly lossy (only the side that opens it creates it).
+if (typeof RTCPeerConnection !== 'undefined') {
+  const cdc = RTCPeerConnection.prototype.createDataChannel;
+  RTCPeerConnection.prototype.createDataChannel = function (label, o) { return cdc.call(this, label, label === 'pos' ? { ...o, ordered: false, maxRetransmits: 0 } : o); };
+}
 let peer = null, conn = null, sendTimer = null, pingTimer = null;
 let posConn = null;            // separate unreliable channel for 30 Hz positions (a late packet never blocks touches)
 let posSeq = 0, lastPosSeq = -1;
@@ -4502,7 +4544,11 @@ function onRemoteState(msg) {
 }
 function wirePos(c) {
   posConn = c;
-  c.on('data', (msg) => { if (msg && msg.t === 's') onRemoteState(msg); });
+  c.on('data', (msg) => {
+    if (!msg) return;
+    if (msg.t === 's') onRemoteState(msg);
+    else if (msg.t === 'S' && Array.isArray(msg.a)) for (const m of msg.a) if (m && m.t === 's') onRemoteState(m);   // team rooms: one packet per tick
+  });
   c.on('close', () => { if (posConn === c) posConn = null; });
   c.on('error', () => {});
 }
@@ -4769,22 +4815,42 @@ function startTeamGame(list, specList = specs) {
   clearInterval(sendTimer); clearInterval(pingTimer);
   sendTimer = setInterval(teamTick, 1000 / 30);
   pingTimer = setInterval(() => netSend({ t: 'ping', ts: performance.now() }), 1500);
-  if (mode === 'host') { for (const L of links.values()) L.seen = performance.now(); resetMatch(); }
-  else if (peer) wirePos(peer.connect(PREFIX + roomCode, { reliable: false, serialization: 'json', label: 'pos' }));
+  if (mode === 'host') { for (const L of links.values()) L.seen = performance.now(); lastTeamTick = performance.now(); relayQ.clear(); resetMatch(); }
+  else openTeamPos();
+}
+// guest: the position channel opens as soon as we're in the room, so it's ready (not still negotiating) when the match starts
+function openTeamPos() {
+  if (mode !== 'guest' || !peer || peer.destroyed || posConn) return;
+  const c = peer.connect(PREFIX + roomCode, { reliable: false, serialization: 'json', label: 'pos' });
+  if (c) wirePos(c);
 }
 const statePkt = (p, id, tele, aim) => ({ t: 's', id, q: (p.seq = (p.seq || 0) + 1), x: +p.pos.x.toFixed(3), z: +p.pos.z.toFixed(3), y: +p.y.toFixed(3),
   r: +p.facing.toFixed(3), s: +Math.hypot(p.vel.x, p.vel.z).toFixed(2),
   tx: tele ? +tele.x.toFixed(2) : null, tz: tele ? +tele.z.toFixed(2) : null, ax: aim ? +aim.x.toFixed(2) : null, az: aim ? +aim.z.toFixed(2) : null });
+const LINK_SILENCE = 15000;     // a closed tab doesn't always fire 'close' — this long with nothing heard counts as gone
+let lastTeamTick = 0;
+const relayQ = new Map();       // host: newest position from each guest, relayed to the others on the next tick
 function teamTick() {
   if (!(me || spec) || !playing) return;
-  const mine = me ? { ...statePkt(me, myId, myTele, aimTarget(me)), sl: slideSeq } : statePkt(spec, myId, null, null);
+  const mine = me ? { ...statePkt(me, myId, myTele, aimTarget(me)), sl: slideSeq } : { ...statePkt(spec, myId, null, null), em: spec.emoteId ?? -1, es: specEmoteSeq };
   if (mode === 'host') {
-    // a closed tab doesn't always fire 'close' — 5 s of silence counts as gone
-    // (15 s: building a map on a slow machine can stall a guest's tab for several seconds right after the start)
-    for (const L of [...links.values()]) if (performance.now() - L.seen > 15000) { teamLeave(L.conn); try { L.conn.close(); } catch {} }
+    const now = performance.now();
+    // our own tab just stalled (building the map + compiling shaders at kick-off takes seconds; a background tab is
+    // throttled): their packets are still queued behind this timer, so don't blame the guests for our silence
+    if (now - lastTeamTick > 1000) for (const L of links.values()) L.seen = Math.max(L.seen, now);
+    lastTeamTick = now;
+    for (const L of [...links.values()]) if (now - L.seen > LINK_SILENCE) { teamLeave(L.conn); try { L.conn.close(); } catch {} try { L.pos && L.pos.close(); } catch {} }
+    // ONE packet per guest per tick (me + every CPU + the other guests) instead of one message per player
     const pk = [mine];
     for (const p of others.values()) if (p.kind === 'cpu') pk.push(statePkt(p, p.id, p.tele, p.aim));
-    for (const L of links.values()) { const ch = L.pos && L.pos.open ? L.pos : L.conn; if (ch.open) for (const m of pk) ch.send(m); }
+    for (const L of links.values()) {
+      const ch = L.pos && L.pos.open ? L.pos : L.conn;
+      if (!ch.open) continue;
+      const a = pk.slice();
+      for (const [id, m] of relayQ) if (id !== L.id) a.push(m);
+      ch.send({ t: 'S', a });
+    }
+    relayQ.clear();
   } else {
     const ch = posConn && posConn.open ? posConn : conn;
     if (ch && ch.open) ch.send(mine);
@@ -4799,6 +4865,10 @@ function onTeamState(msg) {
   p.tele = Number.isFinite(msg.tx) && Number.isFinite(msg.tz) ? { x: msg.tx, z: msg.tz } : null;
   p.aim = Number.isFinite(msg.ax) && Number.isFinite(msg.az) ? { x: msg.ax, z: msg.az } : null;
   remoteSlide(p, msg.sl);
+  if (Number.isFinite(msg.es) && msg.es !== p.esSeen) {          // a spectator started an emote
+    if (p.esSeen !== undefined && msg.em >= 0 && msg.em < EMOTES.length) p.emote = { id: msg.em, t: 0 };
+    p.esSeen = msg.es;
+  }
 }
 // their slide counter ticked: play the slide (the first packet just sets the baseline)
 function remoteSlide(p, sl) {
@@ -4857,7 +4927,8 @@ function hostGotState(msg, L) {
   L.seen = performance.now();
   msg.id = L.id;
   onTeamState(msg);
-  for (const O of links.values()) { if (O === L) continue; const ch = O.pos && O.pos.open ? O.pos : O.conn; if (ch.open) ch.send(msg); }
+  const prev = relayQ.get(L.id);
+  if (!prev || !(msg.q <= prev.q)) relayQ.set(L.id, msg);      // the pos channel is unordered: keep the newest
 }
 function teamLeave(c) {
   const L = links.get(c.peer);
@@ -4884,6 +4955,7 @@ function joinRoom(msg) {
   pingTimer = setInterval(() => { if (conn && conn.open) conn.send({ t: 'ping', ts: performance.now() }); }, 2000);
   ui.waitStatus.textContent = msg.spec ? 'You’re spectating — waiting for the host to start…' : 'Waiting for the host to start…';
   if (!msg.late) renderRoom();
+  openTeamPos();
 }
 function onGuestTeamData(msg) {
   if (msg.t === 'hello') { if (!playing) joinRoom(msg); return; }
@@ -4899,6 +4971,7 @@ function onGuestTeamData(msg) {
   }
   else if (msg.t === 'start') { if (!playing) { fmt = msg.fmt; gameMap = msg.map ? cleanChoice(msg.map, msg.time) : null; startTeamGame(msg.roster || [], msg.specs || []); } }
   else if (msg.t === 's') onTeamState(msg);
+  else if (msg.t === 'S' && Array.isArray(msg.a)) { for (const m of msg.a) if (m && m.t === 's') onTeamState(m); }   // pos channel not open: same batch on the reliable one
   else if (msg.t === 'ping') conn.send({ t: 'pong', ts: msg.ts });
   else if (msg.t === 'pong' && Number.isFinite(msg.ts)) { rtt = rtt * 0.7 + (performance.now() - msg.ts) * 0.3; ui.ping.textContent = `${roomCode} · ${fmt} · ${Math.round(rtt)} ms`; }
   else if (msg.t === 'touch') { if (msg.id !== myId) onRemoteTouch(msg); }
@@ -4920,6 +4993,8 @@ function claimLobbySlot(i = 0) {
   sp.on('error', (e) => {
     if (slotPeer !== sp) return;
     if (e.type === 'unavailable-id') { try { sp.destroy(); } catch {} slotPeer = null; claimLobbySlot(i + 1); }
+    // the broker refused / dropped us before we ever registered (PeerJS gives up on the peer): try that slot again shortly
+    else if (sp.destroyed) { slotPeer = null; setTimeout(() => { if (!slotPeer && mode === 'host' && peer && !peer.destroyed) claimLobbySlot(i); }, 3000); }
   });
   sp.on('connection', (c) => {
     c.on('open', () => {
@@ -4933,41 +5008,47 @@ function claimLobbySlot(i = 0) {
 }
 function releaseLobbySlot() { if (slotPeer) { const sp = slotPeer; slotPeer = null; try { sp.destroy(); } catch {} } }
 
-let probePeer = null, lobbyTimer = null, probing = false;
+let probePeer = null, lobbyTimer = null, probing = false, probeRound = 0, lobbyShown = [];
 const probeEnders = new Map();
 function startLobbyBrowser() {
   if (lobbyTimer) return;
   refreshLobbies();
-  lobbyTimer = setInterval(refreshLobbies, 8000);
+  lobbyTimer = setInterval(refreshLobbies, 4000);
 }
 function stopLobbyBrowser() {
-  clearInterval(lobbyTimer); lobbyTimer = null; probing = false; probeEnders.clear();
+  clearInterval(lobbyTimer); lobbyTimer = null; probing = false; probeEnders.clear(); probeRound++;
   if (probePeer) { try { probePeer.destroy(); } catch {} probePeer = null; }
 }
 function refreshLobbies() {
   if (probing) return;
   const run = () => {
-    if (!probePeer || probePeer.destroyed) return;
+    // not registered with the broker right now (dropped: keepBroker is re-registering) — try again next tick
+    if (!probePeer || probePeer.destroyed || !probePeer.open) return;
     probing = true;
+    const round = ++probeRound;
     const found = [];
     let left = LOBBY_SLOTS;
-    const finish = () => { if (--left > 0) return; probing = false; renderLobbies(found); };
+    const finish = () => { if (round !== probeRound || --left > 0) return; probing = false; lobbyShown = found; renderLobbies(found.slice()); if (lobbyTimer) setTimeout(() => { if (lobbyTimer) refreshLobbies(); }, 500); };   // back-to-back rounds
     for (let i = 0; i < LOBBY_SLOTS; i++) {
       const id = LOBBY_PREFIX + i;
-      let done = false;
-      const c = probePeer.connect(id, { reliable: true, serialization: 'json' });
-      const end = () => { if (done) return; done = true; probeEnders.delete(id); try { c.close(); } catch {} finish(); };
+      let done = false, c = null;
+      const end = () => { if (done) return; done = true; if (probeEnders.get(id) === end) probeEnders.delete(id); try { c && c.close(); } catch {} finish(); };
       probeEnders.set(id, end);
+      try { c = probePeer.connect(id, { reliable: true, serialization: 'json' }); } catch {}
+      if (!c) { end(); continue; }       // (a throw here used to leave 'probing' stuck on — no lobbies ever again)
       c.on('data', (msg) => {
-        if (msg && msg.t === 'lobby' && msg.v === PROTOCOL && msg.open && /^[A-Z0-9]{4}$/.test(msg.code || '')) {
+        if (round === probeRound && msg && msg.t === 'lobby' && msg.v === PROTOCOL && msg.open && /^[A-Z0-9]{4}$/.test(msg.code || '')) {
           found.push({ code: msg.code, host: String(msg.host || 'Player').slice(0, 14), born: Number(msg.born) || 0, join: !!msg.join, playing: !!msg.playing, w: Number(msg.w) || 0,
             fmt: ['1v1', '2v2', '3v3'].includes(msg.fmt) ? msg.fmt : '1v1', n: Number(msg.n) || 1, cap: Number(msg.cap) || 2, map: mapById(msg.map).name, time: 'Night' });
+          // show it right away, next to what the last round found (don't wait for the slowest of the 12 probes)
+          const m = new Map(lobbyShown.map((L) => [L.code, L])); for (const L of found) m.set(L.code, L);
+          renderLobbies([...m.values()]);
         }
         end();
       });
       c.on('error', end);
       c.on('close', end);
-      setTimeout(end, 4500);
+      setTimeout(end, 4000);
     }
   };
   if (!probePeer || probePeer.destroyed) {
@@ -5015,18 +5096,25 @@ function hostGame(attempt = 0) {
   showScreen('wait');
   renderRoom();
   peer = newPeer(PREFIX + roomCode);
-  peer.on('open', () => { ui.waitStatus.textContent = 'Waiting for opponent to join…'; lobbyBorn = Date.now(); claimLobbySlot(0); renderRoom(); });
+  let registered = false;
+  peer.on('open', () => {
+    if (registered) { renderRoom(); return; }      // re-registered after a broker drop: the room (and its lobby slot) carry on
+    registered = true;
+    ui.waitStatus.textContent = 'Waiting for opponent to join…'; lobbyBorn = Date.now(); claimLobbySlot(0); renderRoom();
+  });
   peer.on('connection', (c) => {
     if (teamMode()) { teamAccept(c); return; }
     if (c.label === 'pos') {                      // the guest's position channel
       if (conn && conn.open && c.peer === conn.peer) wirePos(c); else c.on('open', () => c.close());
       return;
     }
-    if (conn && conn.open) { c.on('open', () => c.close()); return; }
+    if (conn && conn.open) { c.on('open', () => { c.send({ t: 'full' }); setTimeout(() => { try { c.close(); } catch {} }, 400); }); return; }   // say so: don't leave them on "Connecting…"
     wireConnection(c);
   });
   peer.on('error', (e) => {
-    if (e.type === 'unavailable-id' && attempt < 5) { teardown(); hostGame(attempt + 1); return; }
+    if (e.type === 'unavailable-id' && attempt < 5 && !registered) { teardown(); hostGame(attempt + 1); return; }
+    // once the room exists, a broker hiccup must not tear it down (and kick everyone in it): keepBroker re-registers
+    if (registered) { if (!playing && BROKER_ERRS.has(e.type)) ui.waitStatus.textContent = 'Reconnecting to matchmaking…'; return; }
     if (playing) { setStatus('Network error: ' + e.type); return; }
     teardown(); showScreen('home');
     showError('Could not create game (' + e.type + ').');
@@ -5043,7 +5131,17 @@ function joinGame() {
   ui.waitStatus.textContent = 'Joining…';
   showScreen('wait');
   const me_ = peer = newPeer();
-  peer.on('open', () => { ui.waitStatus.textContent = 'Connecting to host…'; wireConnection(peer.connect(PREFIX + code, { reliable: true, serialization: 'json' })); });
+  // ICE sometimes never finishes (and PeerJS raises nothing until it 'fails' ~30 s later): start a fresh attempt every 8 s
+  const attempt = (n) => {
+    if (peer !== me_ || mode !== 'guest' || (conn && conn.open)) return;
+    if (conn) { const old = conn; conn = null; try { old.close(); } catch {} }
+    const c = peer.connect(PREFIX + code, { reliable: true, serialization: 'json' });
+    if (!c) return;
+    wireConnection(c);
+    if (n < 2) setTimeout(() => attempt(n + 1), 8000);
+  };
+  let tried = false;
+  peer.on('open', () => { if (tried) return; tried = true; ui.waitStatus.textContent = 'Connecting to host…'; attempt(0); });
   // the broker knows the room but no network route opens (blocked by firewall / NAT): don't hang on "Joining…"
   setTimeout(() => {
     if (peer !== me_ || mode !== 'guest' || (conn && conn.open)) return;
@@ -5051,6 +5149,9 @@ function joinGame() {
     showError(`Couldn't connect to ${code} — the network may be blocking it. Try again, or try another Wi-Fi / mobile data.`);
   }, 25000);
   peer.on('error', (e) => {
+    if (peer !== me_) return;
+    // already linked to the host: a broker drop / a side channel failing must not throw us out of the room
+    if (conn && conn.open) { if (playing && !BROKER_ERRS.has(e.type) && e.type !== 'peer-unavailable') setStatus('Network error: ' + e.type); return; }
     if (playing) { setStatus('Network error: ' + e.type); return; }
     teardown(); showScreen('home');
     showError(e.type === 'peer-unavailable' ? `No game found with code ${code}.` : `Could not join (${e.type}).`);
@@ -5309,7 +5410,7 @@ startLobbyBrowser();
 document.getElementById('lobby-refresh').onclick = () => { const el = document.getElementById('lobby-list'); if (el && !probing) el.innerHTML = '<p class="lobby-empty">Looking for games…</p>'; refreshLobbies(); };
 
 // debug hook for automated testing
-window.__takraw = { setCourt: (sz) => setCourtSize(sz), get spec() { return spec; }, specChars: () => [...specChars.values()].map((p) => ({ x: +p.pos.x.toFixed(2), z: +p.pos.z.toFixed(2) })), get specs() { return specs; }, cam: () => camera.position.toArray().map((v) => +v.toFixed(2)), get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, time: () => timeOfDay, venues: () => venues, mapPick: () => mapPick, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, debugRenderer: () => ({ ...(() => { renderer.info.autoReset = false; renderer.info.reset(); renderer.render(scene, camera); const r = { calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; renderer.info.autoReset = true; return r; })(), msaa: composer.renderTarget1.samples, dpr: renderer.getPixelRatio(), shadow: key.shadow.mapSize.x, quality: qualityLevel }), net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
+window.__takraw = { setCourt: (sz) => setCourtSize(sz), emote: (id) => { const q = spec || pv.p; if (q) { q.emote = { id, t: 0 }; if (q === pv.p) { pv.move = 'emote'; pv.seq = []; } } }, specKey: (c) => specKey(c), get spec() { return spec; }, specChars: () => [...specChars.values()].map((p) => ({ x: +p.pos.x.toFixed(2), z: +p.pos.z.toFixed(2) })), get specs() { return specs; }, cam: () => camera.position.toArray().map((v) => +v.toFixed(2)), get me() { return me; }, get them() { return them; }, get others() { return others; }, get roster() { return roster; }, get fmt() { return fmt; }, venue: () => venue, time: () => timeOfDay, venues: () => venues, mapPick: () => mapPick, links: () => links.size, F, ball, match, P, aim: () => ({ ...aimCell }), meter: () => myMeter, debugRenderer: () => ({ ...(() => { renderer.info.autoReset = false; renderer.info.reset(); renderer.render(scene, camera); const r = { calls: renderer.info.render.calls, tris: renderer.info.render.triangles }; renderer.info.autoReset = true; return r; })(), msaa: composer.renderTarget1.samples, dpr: renderer.getPixelRatio(), shadow: key.shadow.mapSize.x, quality: qualityLevel }), net: () => ({ main: !!(conn && conn.open), pos: !!(posConn && posConn.open), lastPosSeq }),
   // test helpers: an incoming smash from the other side, and the block effects
   debugSmash: (tx, tz, v = 16) => { const sOpp = -sideSign(me.side); setBall(P.solveSpeed({ x: sOpp * 1.2, y: 2.9, z: 0 }, { x: tx, z: tz }, v)); ballLive = true;
     Object.assign(match, { phase: 'rally', poss: other(me.side), cnt: 2, last: other(me.side), lastPart: 'smash', settled: false }); contactJuice('smash', '', ball, false); },
