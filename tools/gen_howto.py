@@ -338,7 +338,7 @@ pages = [
       <div class="rule"><span class="rb lose">WIDE</span><div><b>Over the net outside the side tapes</b><small>the ball must cross between the white tapes</small></div></div>
       <div class="rule"><span class="rb lose">4</span><div><b>A fourth touch</b><small>3 touches max per side — body touches count too</small></div></div>
       <div class="rule"><span class="rb lose">FOOT</span><div><b>Serving outside your circle</b><small>or tossing and not kicking</small></div></div>
-      <div class="rule"><span class="rb info">7</span><div><b>First to 7 wins</b><small>every rally scores a point</small></div></div>
+      <div class="rule"><span class="rb info">11</span><div><b>First to 11 wins</b><small>every rally scores a point</small></div></div>
       <div class="rule"><span class="rb info">BLK</span><div><b>Blocks are free</b><small>at the net, jump + L right as their attack crosses: perfect stuffs it back down · a block never uses a touch</small></div></div>
       <div class="rule"><span class="rb lose">DIG</span><div><b>Their smash: get to the red mark</b><small>stand in it and dig on GREEN — anything else is their point</small></div></div>
     </div>'''),

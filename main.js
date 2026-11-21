@@ -1884,7 +1884,7 @@ function interpRemote(them, dt) {
    Rules: max 3 touches per side (one player may take all 3), ball down in
    your court = you lose the point, out / net / under / outside the side
    tapes = the last toucher loses. Serve from the service circle, serve
-   passes every 3 points, first to 7 wins.
+   passes every 3 points, first to 11 wins.
    ===================================================================== */
 const ACTION_DUR = 0.34;
 const REACH = 1.0;                // how far (m) from your body you can play the ball
@@ -1894,7 +1894,7 @@ P.C.floorR = BALL_VR;             // the ball lands when the drawn ball touches 
 const BALL_TIME = 0.88;           // ball physics runs at 88% speed (was 78% — a whiffed block shouldn't leave time to fully recover)
 const PERFECT = 0.06;             // perfect window (ball-time seconds)
 const other = (s) => (s === 'left' ? 'right' : 'left');
-const WIN_SCORE = 7;              // first to 7 points takes the game
+const WIN_SCORE = 11;             // first to 11 points takes the game
 
 // ---- visuals ----
 function ballTexture() {
@@ -3347,7 +3347,7 @@ function applyPoint(loser, reason, mark = null) {
     match.serveCount++;
     if (match.serveCount >= 3) { match.serveCount = 0; match.server = other(match.server); if (teamMode()) pickServer(match.server); }
     const a = match.score.left, b = match.score.right;
-    if (Math.max(a, b) >= WIN_SCORE && !training) match.over = true;   // first to 7 wins (training never ends)
+    if (Math.max(a, b) >= WIN_SCORE && !training) match.over = true;   // first to 11 wins (training never ends)
   }
   match.phase = 'point';
   pointTimer = 2.0;
