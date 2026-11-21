@@ -53,7 +53,7 @@ const TEAMS = {
   // colours are relative to the viewer: you are always blue, your opponent always red
   me:  { name: 'me',  jersey: 0x3d8bff, trim: 0xf1f6ff, shorts: 0x15161b, css: '#3d8bff' },
   opp: { name: 'opp', jersey: 0xff3b30, trim: 0xfff1ee, shorts: 0x15161b, css: '#ff3b30' },
-  spec: { name: 'spec', jersey: 0x8a8f99, trim: 0xe6e6e6, shorts: 0x2a2c31, css: '#8a8f99' },        // spectators: plain grey kit
+  spec: { name: 'spec', jersey: 0xf2f2f4, trim: 0xe6e6e6, shorts: 0x2a2c31, css: '#f2f2f4' },        // spectators: plain white kit
   mate: { name: 'mate', jersey: 0x7db4ff, trim: 0xf1f6ff, shorts: 0x15161b, css: '#7db4ff' },   // your teammate (2v2 / 3v3)
 };
 const sideSign = (side) => (side === 'left' ? 1 : -1);
@@ -1273,7 +1273,7 @@ function createPlayer(side, name, teamKey = side, look = null, plain = false) {
   const body = new THREE.Group();      // lean + bob + jump height
   root.add(yaw); yaw.add(body);
 
-  const jerseyCol = plain ? new THREE.Color(0x5b616c) : new THREE.Color(LOOK_OPTS.jersey[L.jersey]);   // spectators: a plain grey kit
+  const jerseyCol = plain ? new THREE.Color(0xeeeef0) : new THREE.Color(LOOK_OPTS.jersey[L.jersey]);   // spectators: a plain white kit
   const lum = jerseyCol.r * 0.3 + jerseyCol.g * 0.59 + jerseyCol.b * 0.11;
   const trimCol = lum > 0.55 ? 0x16181f : 0xf6f1e6;                // contrast trim
   const std = (color, roughness) => addRim(new THREE.MeshStandardMaterial({ color, roughness }));
