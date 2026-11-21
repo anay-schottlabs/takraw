@@ -1376,6 +1376,11 @@ function createPlayer(side, name, teamKey = side, look = null, plain = false) {
   pool.rotation.x = -Math.PI / 2;
   pool.position.y = 0.008;
   root.add(pool);
+  if (plain) {                         // spectators: a soft glow so they stand out at night (the white kit most)
+    const seen = new Set();
+    root.traverse((o) => { const m = o.material; if (!m || !m.isMeshStandardMaterial || seen.has(m)) return; seen.add(m);
+      m.emissive.copy(m.color).multiplyScalar(m === jersey || m === trim || m === band ? 0.32 : 0.1); });
+  }
   if (plain) { ring.visible = false; pool.material.color.multiplyScalar(0.45); pool.scale.setScalar(0.7); }   // no team ring; a soft light so they read at night
 
   scene.add(root);

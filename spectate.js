@@ -45,7 +45,7 @@ export function makeZone(map, size, F) {
   const walk = (x, z) => { if (!outside(x, z)) return false; const k = at(x, z); return k >= 0 && ok[k] === 1; };
   const floorY = (x, z) => { const k = at(x, z); return k >= 0 && kind[k] === 1 ? val[k] : 0; };
   // how high the scenery reaches here (for the camera); void / floor = nothing to hit
-  const top = (x, z) => { const k = at(x, z); return k >= 0 ? topV[k] : -Infinity; };
+  const top = (x, z) => { const k = at(x, z); return k >= 0 && kind[k] === 2 ? topV[k] : -Infinity; };   // (things overhead with open ground below — lanterns, wires, canopies — don't count)
   // a spot for spectator #n: around the court, the n-th of a few nice viewing angles
   function spawn(n = 0) {
     const [sx, sz] = [[0, 1], [0, -1], [0.55, 1], [-0.55, 1], [0.55, -1], [-0.55, -1], [1, 0], [-1, 0]][n % 8];
@@ -82,12 +82,14 @@ export function spectatorCamera(zone, p, look, outPos, outLook) {
   const D = 4.6, HC = 2.6;
   let d = D;
   for (let t = 0.75; t <= D + 0.5; t += 0.25) {                         // pull in before anything as tall as the camera
-    if (zone.top(p.x + ox * t, p.z + oz * t) > HC - 0.3) { d = Math.max(1.6, t - 0.5); break; }
+    const cx = p.x + ox * t, cz = p.z + oz * t, hi = (dx, dz) => (zone.top(cx + dx, cz + dz) > HC - 0.3 ? 1 : 0);
+    if (hi(0, 0) && hi(-oz * 0.5, ox * 0.5) + hi(oz * 0.5, -ox * 0.5) >= 1) { d = Math.max(1.6, t - 0.5); break; }   // a wall / trunk — not a thin pole
   }
   const fy = zone.floorY(p.x, p.z);
   const k = (D - d) / (D - 1.6);                                        // 0 = room to stand back, 1 = right up against something
-  outPos.set(p.x + ox * d, fy + HC + k * 0.8, p.z + oz * d);
+  outPos.set(p.x + ox * d, fy + HC + k * 0.5, p.z + oz * d);
   // aim past you at the court (you stay in the lower part of the shot), drifting a little toward the ball
-  const ax = p.x - ox * 3.2, az = p.z - oz * 3.2;
+  const ahead = 3.2 - k * 1.7;                                          // camera pulled in close: aim nearer so you stay in the shot
+  const ax = p.x - ox * ahead, az = p.z - oz * ahead;
   outLook.set(ax + (look.x - ax) * 0.2, fy + 0.35, az + (look.z - az) * 0.2);
 }
