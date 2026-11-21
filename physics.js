@@ -62,8 +62,11 @@ export function step(b, dt, ev, opts = {}) {
       b.vx *= 0.5; b.vz *= 0.7; b.vy = Math.abs(b.vy) * 0.3 + 0.8;
       ev && ev.push({ type: 'tape', x: b.x, y: b.y, z: b.z });
     } else if (b.y >= bottom - BALL_R) {
-      b.x = (px < 0 ? -1 : 1) * BALL_R;
-      b.vx = -b.vx * 0.2; b.vy *= 0.5; b.vz *= 0.6;
+      // drops back off the net on the side it came from — held clear of the mesh by the DRAWN ball's radius, so it
+      // never sits inside the net, and always moving a little away from it
+      const back = px < 0 ? -1 : 1;
+      b.x = back * Math.max(BALL_R, C.floorR + 0.02);
+      b.vx = back * Math.max(0.6, Math.abs(b.vx) * 0.2); b.vy *= 0.5; b.vz *= 0.6;
       ev && ev.push({ type: 'net', x: b.x, y: b.y, z: b.z });
     } else {
       ev && ev.push({ type: 'under', x: b.x, y: b.y, z: b.z });

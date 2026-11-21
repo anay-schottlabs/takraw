@@ -2753,7 +2753,7 @@ function resolveBlock(c, dt) {
   pendingCross = null; blockPress = -1e9;
   const perfect = Math.abs(dt) <= (c.win ? c.win.perfect : BLOCK_PERFECT);
   const s = sideSign(me.side);                          // their half is on the +s side of the net
-  const from = { x: s * 0.12, y: Math.max(c.y, P.netTop(c.z) + 0.15), z: c.z };
+  const from = { x: s * (BALL_VR + 0.06), y: Math.max(c.y, P.netTop(c.z) + 0.15), z: c.z };   // (clear of the net mesh)
   const zIn = (z) => THREE.MathUtils.clamp(z, -(F.hw - 0.4), F.hw - 0.4);
   let shot;
   if (perfect) {
@@ -3219,7 +3219,15 @@ function bodyCheck() {
   if (outV < 1.6) { ball.vx += (1.6 - outV) * n.x; ball.vz += (1.6 - outV) * n.z; }
   ball.x = me.pos.x + n.x * 0.3; ball.z = me.pos.z + n.z * 0.3;
   ball.vy = Math.abs(ball.vy) * 0.3 + 1.4;
-  if (block) { ball.vx = Math.abs(ball.vx) * sideSign(me.side) * 0.6 + sideSign(me.side) * 1.5; }
+  if (block) {
+    // a body block at the net always pops the ball back OVER the net (it used to be shoved into the net, rattle off it into
+    // you, and get shoved in again)
+    const sg = sideSign(me.side);
+    const from = { x: -sg * Math.max(BALL_VR + 0.08, Math.abs(ball.x)), y: Math.max(ball.y, 0.9), z: ball.z };
+    if (P.sideOfX(from.x) !== me.side) from.x = -sg * (BALL_VR + 0.08);
+    const tg = { x: sg * (1.4 + Math.random() * 1.8), z: THREE.MathUtils.clamp(ball.z + (Math.random() - 0.5) * 1.5, -(F.hw - 0.4), F.hw - 0.4) };
+    Object.assign(ball, P.solveApex(from, tg, Math.max(P.netTop(from.z) + 0.8, from.y + 0.5), true));
+  }
   hist.length = 0; landingDirty = true;
   if (!block) {
     if (match.poss !== me.side) { match.poss = me.side; match.cnt = 0; }
@@ -4081,7 +4089,7 @@ function cpuTryBlock(p, e) {
   ai.goNet = false;
   const perfect = Math.random() < (cpuLvlOf(p) === 'train' ? 1 : 0.55);
   const s = sideSign(p.side);
-  const from = { x: s * 0.12, y: Math.max(e.y, P.netTop(e.z) + 0.15), z: e.z };
+  const from = { x: s * (BALL_VR + 0.06), y: Math.max(e.y, P.netTop(e.z) + 0.15), z: e.z };   // (clear of the net mesh)
   const zIn = (z) => THREE.MathUtils.clamp(z, -(F.hw - 0.4), F.hw - 0.4);
   const shot = perfect
     ? P.solveSpeed(from, { x: s * (0.9 + Math.random() * 1.3), z: zIn(e.z + (Math.random() - 0.5) * 2.4) }, 15)
