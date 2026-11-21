@@ -432,3 +432,5 @@ button { font-family: inherit; }
 .spec-chip .key { margin-right: 4px; }
 #hud.spectating .spec-chip { display: flex; }
 #hud.spectating .chips, #hud.spectating .controls-bar, #hud.spectating #meter, #hud.spectating #tm-float, #hud.spectating .sb-meter, #hud.spectating #hint { display: none !important; }
+
+#slide-chip { display: none !important; }   /* the slide prompt is not shown in the HUD */
