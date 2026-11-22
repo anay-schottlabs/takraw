@@ -23,3 +23,9 @@ Temple Courtyard — ULTRA graphics (`temple-ultra.js`, loaded only when Graphic
 Everything else in Ultra (columns, chedis, naga rails, viharns, the great golden chedis, trees, palms, mountains, particles) is generated in code.
 
 Hill Tribe Terrace — ULTRA graphics (`terrace-ultra.js`): generated in code; reuses `temple-ultra/leafy_grass_diff.jpg` as ground detail.
+
+Cloud Monastery — ULTRA graphics (`monastery-ultra.js`, loaded only when Graphics is set to Ultra):
+- `monastery-ultra/floor_*` — "Monastery Stone Floor" (Poly Haven, CC0; 1k diffuse + GL normal) — the summit terrace's flagstones
+- `monastery-ultra/wall_diff.jpg` — "Japanese Stone Wall" (Poly Haven, CC0; 512px, stored greyscale) — retaining walls, parapets, stairs, podium (triplanar detail + bump)
+- `monastery-ultra/cliff_diff.jpg` — "Cliff Side" (Poly Haven, CC0; 1k, stored greyscale) — the summit cliffs and the distant peaks (triplanar detail + bump)
+Everything else in Ultra (the cloud sea, peaks, pines, chedis, viharns, naga, monks, lanterns, mist) is generated in code.

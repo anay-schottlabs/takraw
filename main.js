@@ -1382,6 +1382,7 @@ function createPlayer(side, name, teamKey = side, look = null, plain = false) {
       m.emissive.copy(m.color).multiplyScalar(m === jersey || m === trim || m === band ? 0.32 : 0.1); });
   }
   if (plain) { ring.visible = false; pool.material.color.multiplyScalar(0.45); pool.scale.setScalar(0.7); }   // no team ring; a soft light so they read at night
+  mergeRigParts(root, new Set([ring, pool]));
 
   scene.add(root);
 
@@ -1394,6 +1395,36 @@ function createPlayer(side, name, teamKey = side, look = null, plain = false) {
     dispose() { scene.remove(root); },
   };
   return p;
+}
+// draw calls: a player is ~45 little meshes. Merge the ones that ride on the same joint and share a material (the joints
+// themselves stay separate Groups, so every animation still works) — about 55 → 25 calls per player (incl. shadows).
+function mergeRigParts(root, skip) {
+  const groups = [];
+  root.traverse((o) => { if (o.isGroup || o === root) groups.push(o); });
+  for (const g of groups) {
+    const buckets = new Map();
+    for (const c of g.children) {
+      if (!c.isMesh || skip.has(c) || c.children.length || Array.isArray(c.material)) continue;
+      const k = c.material.uuid + (c.castShadow ? 's' : '') + (c.renderOrder || 0);
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(c);
+    }
+    for (const list of buckets.values()) {
+      if (list.length < 2) continue;
+      const geos = list.map((m) => { m.updateMatrix(); const q = m.geometry.index ? m.geometry.clone() : null; return q && q.applyMatrix4(m.matrix); });
+      if (geos.some((q) => !q)) continue;
+      const keep = new Set(['position', 'normal', 'uv']);
+      for (const q of geos) for (const a of Object.keys(q.attributes)) if (!keep.has(a)) q.deleteAttribute(a);
+      const merged = mergeGeometries(geos, false);
+      if (!merged) continue;
+      const m = new THREE.Mesh(merged, list[0].material);
+      m.castShadow = list[0].castShadow; m.receiveShadow = list[0].receiveShadow; m.renderOrder = list[0].renderOrder;
+      for (const c of list) { g.remove(c); c.geometry.dispose(); }
+      g.add(m);
+    }
+  }
+  // tiny parts (eyes, brows, trims, symbols) don't need to cast a shadow
+  root.traverse((o) => { if (!o.isMesh || !o.castShadow) return; o.geometry.computeBoundingSphere(); if (o.geometry.boundingSphere.radius < 0.07) o.castShadow = false; });
 }
 function buildHair(headG, style, mat, HY, M) {
   // hair is drawn big and chunky so each style reads from the game camera; returns the headband radius to sit over it
