@@ -4449,12 +4449,19 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 // add one to TURN below. (PeerJS's and Metered's free public relays are both gone.)
 // ?relay=1 forces relay-only (for testing the TURN path).
 const TURN = [];
+// TURN relay credentials (Metered): set TURN_API to your app's credentials URL, e.g.
+// 'https://<app>.metered.live/api/v1/turn/credentials?apiKey=<key>' — fetched once at startup and added to every connection.
+const TURN_API = '';
 const PEER_OPTS = {
   config: {
     iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }, ...TURN],
     ...(new URLSearchParams(location.search).get('relay') === '1' ? { iceTransportPolicy: 'relay' } : {}),
   },
 };
+const iceReady = !TURN_API ? Promise.resolve() : Promise.race([
+  fetch(TURN_API).then((r) => r.json()).then((list) => { if (Array.isArray(list) && list.length) PEER_OPTS.config.iceServers.push(...list); }).catch(() => {}),
+  new Promise((r) => setTimeout(r, 4000)),                 // never hold the menu hostage to it
+]);
 const newPeer = (id) => keepBroker(id ? new Peer(id, PEER_OPTS) : new Peer(PEER_OPTS));
 // The broker (signalling server) socket drops now and then: a Wi-Fi blip, a sleeping laptop, a background tab whose
 // heartbeat timer got throttled. PeerJS then fires a 'network' error and goes 'disconnected', but every P2P link that is
@@ -5061,6 +5068,7 @@ let probePeer = null, lobbyTimer = null, probing = false, probeRound = 0, lobbyS
 const probeEnders = new Map();
 function startLobbyBrowser() {
   if (lobbyTimer) return;
+  if (TURN_API && !startLobbyBrowser.ice) { startLobbyBrowser.ice = true; iceReady.then(() => { if (!ui.home.classList.contains('hidden')) startLobbyBrowser(); }); return; }   // probe with the relay too
   refreshLobbies();
   lobbyTimer = setInterval(refreshLobbies, 4000);
 }
@@ -5135,7 +5143,8 @@ function renderLobbies(list) {
   }
 }
 
-function hostGame(attempt = 0) {
+function hostGame(attempt = 0) { iceReady.then(() => hostGameNow(attempt)); }
+function hostGameNow(attempt = 0) {
   readName(); showError('');
   mode = 'host';
   roomCode = randomCode();
@@ -5170,7 +5179,8 @@ function hostGame(attempt = 0) {
   });
 }
 
-function joinGame() {
+function joinGame() { iceReady.then(joinGameNow); }
+function joinGameNow() {
   readName();
   const code = ui.code.value.trim().toUpperCase();
   if (!/^[A-Z0-9]{4}$/.test(code)) { showError('Enter the 4-character party code.'); return; }
