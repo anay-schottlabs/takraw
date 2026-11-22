@@ -98,7 +98,7 @@ function stoneShader(mat, o) {
         #ifdef USE_INSTANCING
           wm = modelMatrix * instanceMatrix;
         #endif
-        vWP = (wm * vec4(transformed, 1.0)).xyz; vWN = normalize(mat3(wm) * objectNormal); }`);
+        vWP = (wm * vec4(transformed, 1.0)).xyz; vec3 wn = mat3(wm) * objectNormal; vWN = dot(wn, wn) > 1e-12 ? normalize(wn) : vec3(0.0, 1.0, 0.0); }`);
     sh.fragmentShader = `varying vec3 vWP; varying vec3 vWN;
       uniform sampler2D uTri; uniform float uTS; uniform float uTA; uniform float uBump; uniform float uMean; uniform vec3 uUpC; uniform float uUpWrap;
       uniform vec3 uLamps[${NL}]; uniform float uLampK; uniform float uLampR; uniform vec3 uLampCol;
@@ -106,15 +106,18 @@ function stoneShader(mat, o) {
       uniform vec2 uMistY; uniform vec3 uMist; uniform vec2 uHaze;
       ${SKY_GLSL}
       float triLum(vec3 p, vec3 n, float s) {
-        vec3 bw = pow(abs(n), vec3(4.0)); bw /= (bw.x + bw.y + bw.z);
+        vec3 bw = pow(abs(n), vec3(4.0)); bw /= max(bw.x + bw.y + bw.z, 1e-6);
         vec3 t = texture2D(uTri, p.zy * s).rgb * bw.x + texture2D(uTri, p.xz * s).rgb * bw.y + texture2D(uTri, p.xy * s).rgb * bw.z;
         return dot(t, vec3(0.2126, 0.7152, 0.0722));
       }
       vec3 perturbB(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float fd) {
-        vec3 vSigmaX = normalize(dFdx(surf_pos)); vec3 vSigmaY = normalize(dFdy(surf_pos)); vec3 vN = surf_norm;
+        vec3 dx = dFdx(surf_pos), dy = dFdy(surf_pos);
+        if (dot(dx, dx) < 1e-14 || dot(dy, dy) < 1e-14) return surf_norm;          // (degenerate pixel: no bump, never NaN)
+        vec3 vSigmaX = normalize(dx); vec3 vSigmaY = normalize(dy); vec3 vN = surf_norm;
         vec3 R1 = cross(vSigmaY, vN); vec3 R2 = cross(vN, vSigmaX);
         float fDet = dot(vSigmaX, R1) * fd; vec3 vGrad = sign(fDet) * (dHdxy.x * R1 + dHdxy.y * R2);
-        return normalize(abs(fDet) * surf_norm - vGrad);
+        vec3 r = abs(fDet) * surf_norm - vGrad;
+        return dot(r, r) > 1e-14 ? normalize(r) : surf_norm;
       }
       ` + sh.fragmentShader
       .replace('#include <map_fragment>', `#include <map_fragment>

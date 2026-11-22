@@ -6,11 +6,15 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rnd, shophouseRow, festoons, floodPoles, boundaryRail, neonSign, paint, vcMat, roofClutter, powerLines } from './props.js';
 import { makeEmbers, personGeometry } from './life.js';
+import { buildMarketUltra } from './market-ultra.js';
 
 export function buildMarket(ctx) {
   const { F, xf, makeBatch, glowTexture } = ctx;
   const g = new THREE.Group(); g.name = 'market';
   const fx = new THREE.Group(); g.add(fx);
+  // pieces Ultra rebuilds (market-ultra.js): everything but the boundary rail + floodlights. Hidden while Ultra is on.
+  const lite = new THREE.Group(); lite.name = 'market-lite'; g.add(lite);
+  const fxLite = new THREE.Group(); fx.add(fxLite);
   const R = rnd(4141);
   const uTime = { value: 0 };
   const decor = makeBatch(), solid = makeBatch();
@@ -32,16 +36,16 @@ export function buildMarket(ctx) {
   for (const s of [-1, 1]) put(MAT.kerb, new THREE.BoxGeometry(LEN * 2, 0.16, 2.6), 0, -0.04, s * (SIDE - 1.3));
   const rowA = shophouseRow({ x0: -LEN, x1: LEN, z: -SIDE, face: 1, seed: 71, minF: 3, maxF: 5, depth: 8 });
   const rowB = shophouseRow({ x0: -LEN, x1: LEN, z: SIDE, face: -1, seed: 83, minF: 3, maxF: 5, depth: 8 });
-  g.add(rowA.group, rowB.group);
+  lite.add(rowA.group, rowB.group);
   const shopMats = [...rowA.mats, ...rowB.mats];
   // a second, taller layer behind for depth
   const backA = shophouseRow({ x0: -LEN, x1: LEN, z: -SIDE - 14, face: 1, seed: 97, minF: 5, maxF: 8, depth: 6 });
   const backB = shophouseRow({ x0: -LEN, x1: LEN, z: SIDE + 14, face: -1, seed: 103, minF: 5, maxF: 8, depth: 6 });
-  g.add(backA.group, backB.group);
+  lite.add(backA.group, backB.group);
   shopMats.push(...backA.mats, ...backB.mats);
-  g.add(roofClutter([...rowA.boxes, ...rowB.boxes, ...backA.boxes, ...backB.boxes], 77));
+  lite.add(roofClutter([...rowA.boxes, ...rowB.boxes, ...backA.boxes, ...backB.boxes], 77));
   // the classic Bangkok tangle of cables on poles along both kerbs
-  for (const s of [-1, 1]) g.add(powerLines(-LEN + 4, LEN - 4, s * (SIDE - 2.4), { step: 12, h: 8.6, seed: s > 0 ? 5 : 9 }));
+  for (const s of [-1, 1]) lite.add(powerLines(-LEN + 4, LEN - 4, s * (SIDE - 2.4), { step: 12, h: 8.6, seed: s > 0 ? 5 : 9 }));
 
   /* ---------------- neon signs on the facades ---------------- */
   const neon = [];
@@ -55,7 +59,7 @@ export function buildMarket(ctx) {
     if (vertical) { n.mesh.scale.set(0.35, 2.4, 1); }
     n.mesh.position.set(x, 4.6 + R() * 4, s * (SIDE - 0.06));
     n.mesh.rotation.y = s > 0 ? Math.PI : 0;
-    g.add(n.mesh);
+    lite.add(n.mesh);
     neon.push(n.mat);
   }
 
@@ -105,7 +109,7 @@ export function buildMarket(ctx) {
     const o = new THREE.Object3D();
     bulbs.forEach(([x, y, z], i) => { o.position.set(x, y, z); o.updateMatrix(); im.setMatrixAt(i, o.matrix); });
     im.computeBoundingSphere();
-    g.add(im);
+    lite.add(im);
   }
   // shoppers along the stalls (one merged mesh)
   {
@@ -120,7 +124,7 @@ export function buildMarket(ctx) {
         const gg = geo.clone(); gg.scale(sc, sc, sc); gg.rotateY(ry); gg.translate(x, -0.12, z); parts.push(paint(gg, col));
       }
     }
-    g.add(new THREE.Mesh(mergeGeometries(parts), MAT.vcFlat));
+    lite.add(new THREE.Mesh(mergeGeometries(parts), MAT.vcFlat));
   }
 
   /* ---------------- both ends: a neon gateway arch over the street + parked tuk-tuks ---------------- */
@@ -145,7 +149,7 @@ export function buildMarket(ctx) {
     put(MAT.vc, paint(new THREE.BoxGeometry(0.5, 1.6, SIDE * 2 - 2.6), 0x2a1a24), ax, 8.6, 0);
     const sign = neonSign(sx > 0 ? 'ตลาดนัด  NIGHT MARKET' : 'NIGHT MARKET  ตลาดนัด', '#ffd23f', SIDE * 2 - 4, 1.3);
     sign.mesh.position.set(ax - sx * 0.27, 8.6, 0); sign.mesh.rotation.y = sx > 0 ? -Math.PI / 2 : Math.PI / 2;
-    g.add(sign.mesh); neon.push(sign.mat);
+    lite.add(sign.mesh); neon.push(sign.mat);
     tuk(sx * (F.outX + 8), -(SIDE - 3.2), sx > 0 ? 0.3 : Math.PI - 0.3, 0x1f8ad8);
     tuk(sx * (F.outX + 12), SIDE - 3.0, sx > 0 ? -0.2 : Math.PI + 0.2, 0x2fa04a);
     tuk(sx * (F.outX + 34), -(SIDE - 3.4), sx > 0 ? 0.1 : Math.PI, 0xd83a2a);
@@ -161,7 +165,7 @@ export function buildMarket(ctx) {
       pairs.push([new THREE.Vector3(x, 5.6, s * (SIDE - 0.4)), new THREE.Vector3(x + 12, 5.6, s * (SIDE - 0.4))]);
     }
     for (const s of [-1, 1]) pairs.push([new THREE.Vector3(-poles[3][0], 6.4, s * (F.outZ + 1.5)), new THREE.Vector3(poles[3][0], 6.4, s * (F.outZ + 1.5))]);
-    g.add(festoons(pairs, { sag: 0.8, n: 16, colors: [0xff5a2e, 0xffae42, 0xffd27a, 0xff3fa0], size: 0.12 }));
+    lite.add(festoons(pairs, { sag: 0.8, n: 16, colors: [0xff5a2e, 0xffae42, 0xffd27a, 0xff3fa0], size: 0.12 }));
   }
 
   /* ---------------- grill smoke + embers, noodle steam ---------------- */
@@ -169,19 +173,20 @@ export function buildMarket(ctx) {
   {
     const mat = new THREE.SpriteMaterial({ map: glowTexture(), color: 0xd8d0d0, transparent: true, opacity: 0, depthWrite: false });
     grills.slice(0, 24).forEach(([x, y, z], i) => {
-      for (let k = 0; k < 2; k++) { const s = new THREE.Sprite(mat.clone()); fx.add(s); smoke.push({ s, src: [x, y, z], t: (k / 2 + i * 0.13) % 1 }); }
+      for (let k = 0; k < 2; k++) { const s = new THREE.Sprite(mat.clone()); fxLite.add(s); smoke.push({ s, src: [x, y, z], t: (k / 2 + i * 0.13) % 1 }); }
     });
-    fx.add(makeEmbers(grills.filter((_, i) => i % 2 === 0).slice(0, 14), uTime, 6));
+    fxLite.add(makeEmbers(grills.filter((_, i) => i % 2 === 0).slice(0, 14), uTime, 6));
   }
 
-  decor.build(g);
+  decor.build(lite);
   solid.build(g, { castShadow: true, receiveShadow: true });
 
-  let time = 0;
+  let time = 0, ultra = null;
   function update(dt) {
     time += dt;
     uTime.value = time;
-    if (!fx.visible) return;
+    if (ultra && ultra.group.visible) ultra.update(dt, time, fx.visible);
+    if (!fx.visible || !fxLite.visible) return;
     for (const sm of smoke) {
       sm.t += dt / 3.5; if (sm.t > 1) sm.t -= 1;
       const t = sm.t;
@@ -194,6 +199,12 @@ export function buildMarket(ctx) {
     const night = tod !== 'day';
     for (const m of shopMats) m.emissiveIntensity = night ? 1.1 : 0;
     for (const m of neon) m.emissiveIntensity = night ? 1.7 : 0.25;
+    if (ultra) ultra.setTime(tod);
   }
-  return { g, fx, update, setTime };
+  // ULTRA (market-ultra.js): a dense, living night market — detailed stalls under glowing tarps, shophouses with balconies,
+  // side alleys, lanterns + bulb strings + cable tangles overhead, steam / smoke / embers, an animated crowd
+  const out = { g, fx, update, setTime, lite };
+  out.buildUltra = () => { ultra = buildMarketUltra(ctx, uTime); return ultra.group; };
+  out.onUltra = (on) => { fxLite.visible = !on; out.fog = on ? { night: [34, 175] } : undefined; if (ctx.applyFog) ctx.applyFog(); };
+  return out;
 }

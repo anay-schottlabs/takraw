@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rnd, makeWater, floodPoles, boundaryRail, paint, vcMat } from './props.js';
+import { buildPalaceUltra } from './palace-ultra.js';
 
 export function buildPalace(ctx) {
   const { F, xf, makeBatch, texLoader, glowTexture, slope, poly, ornamentTexture } = ctx;
@@ -13,7 +14,12 @@ export function buildPalace(ctx) {
   const R = rnd(9595);
   const uTime = { value: 0 };
   const decor = makeBatch(), solid = makeBatch();
-  const put = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => decor.put(mat, xf(geo, x, y, z, ry, rx, rz));
+  // pieces Ultra rebuilds (palace-ultra.js) go in `lite` (hidden on Ultra): ground, pool water + jets, lily pads, topiary,
+  // parterres, lamp posts, the pavilions + giants, chedis, prangs and the wall
+  const lite = new THREE.Group(); lite.name = 'palace-lite'; g.add(lite);
+  const liteB = makeBatch();
+  const put = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => liteB.put(mat, xf(geo, x, y, z, ry, rx, rz));
+  const putK = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => decor.put(mat, xf(geo, x, y, z, ry, rx, rz));   // kept on Ultra
   const putS = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => solid.put(mat, xf(geo, x, y, z, ry, rx, rz));
   const roofTex = texLoader.load('assets/temple/roof_diff.jpg'), roofNor = texLoader.load('assets/temple/roof_nor_gl.jpg');
   for (const t of [roofTex, roofNor]) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; }
@@ -43,17 +49,17 @@ export function buildPalace(ctx) {
       const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(PX / 1.5, (PZ + 14) / 1.5); t.colorSpace = THREE.SRGBColorSpace; return t;
     })();
     const terrace = new THREE.Mesh(new THREE.PlaneGeometry(PX * 2 + 60, (PZ + 14) * 2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.3, color: 0xffffff }));
-    terrace.rotation.x = -Math.PI / 2; terrace.position.y = -0.1; terrace.receiveShadow = true; g.add(terrace);
+    terrace.rotation.x = -Math.PI / 2; terrace.position.y = -0.1; terrace.receiveShadow = true; lite.add(terrace);
     const lawn = new THREE.Mesh(new THREE.PlaneGeometry(400, 320), new THREE.MeshStandardMaterial({ color: 0x5f8a3a, roughness: 0.95 }));
-    lawn.rotation.x = -Math.PI / 2; lawn.position.y = -0.14; g.add(lawn);
+    lawn.rotation.x = -Math.PI / 2; lawn.position.y = -0.14; lite.add(lawn);
   }
   /* ---------------- reflecting pools + fountains ---------------- */
   const jets = [];
   for (const s of [-1, 1]) {
     const zc = s * (POOL_Z0 + POOL_Z1) / 2, len = (F.outX + 14) * 2, wid = POOL_Z1 - POOL_Z0;
     const w = makeWater(texLoader, uTime, { w: len, d: wid, color: 0x1f4a6a, opacity: 1, repeat: [len / 6, wid / 6] });
-    w.position.set(0, -0.04, zc); g.add(w);                                    // above the marble terrace plane (y −0.1)
-    for (const [l, d, x, z] of [[len + 0.8, 0.4, 0, s * POOL_Z0], [len + 0.8, 0.4, 0, s * POOL_Z1], [0.4, wid, -len / 2, zc], [0.4, wid, len / 2, zc]]) put(MAT.marble, new THREE.BoxGeometry(l, 0.36, d), x, 0.08, z);
+    w.position.set(0, -0.04, zc); lite.add(w);                                    // above the marble terrace plane (y −0.1)
+    for (const [l, d, x, z] of [[len + 0.8, 0.4, 0, s * POOL_Z0], [len + 0.8, 0.4, 0, s * POOL_Z1], [0.4, wid, -len / 2, zc], [0.4, wid, len / 2, zc]]) putK(MAT.marble, new THREE.BoxGeometry(l, 0.36, d), x, 0.08, z);
     for (let x = -len / 2 + 5; x < len / 2 - 4; x += 7) {
       put(MAT.gold, new THREE.CylinderGeometry(0.3, 0.45, 0.4, 10), x, 0.05, zc);
       jets.push([x, zc]);
@@ -63,12 +69,13 @@ export function buildPalace(ctx) {
     const jet = new THREE.CylinderGeometry(0.04, 0.14, 1.8, 6, 1, true); jet.translate(0, 0.9, 0);
     const im = new THREE.InstancedMesh(jet, new THREE.MeshBasicMaterial({ color: 0xeaf6ff, transparent: true, opacity: 0.6, depthWrite: false }), jets.length);
     im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); im.frustumCulled = false;
-    g.add(im);
+    lite.add(im);
     var jetMesh = im;
     const lights = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.8, 1.8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0x9fd8ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }), jets.length);
     const o = new THREE.Object3D();
     jets.forEach(([x, z], i) => { o.position.set(x, -0.02, z); o.updateMatrix(); lights.setMatrixAt(i, o.matrix); });
     lights.computeBoundingSphere(); lights.renderOrder = 3; fx.add(lights);
+    var jetLights = lights;
   }
 
   // lily pads drifting in the pools
@@ -138,7 +145,7 @@ export function buildPalace(ctx) {
     P(MAT.gold, new THREE.ConeGeometry(0.5, 7, 8), D / 2, y + 3.5, 0);
     for (const sx of [-1, 1]) {
       const M = new THREE.Matrix4().makeRotationY(sx > 0 ? 0 : Math.PI).setPosition(sx * HALL_X, -0.1, 0);
-      for (const [mat, geo] of hall) decor.put(mat, geo.clone().applyMatrix4(M));
+      for (const [mat, geo] of hall) liteB.put(mat, geo.clone().applyMatrix4(M));
     }
     for (const [, geo] of hall) geo.dispose();
     // guardian giants (yaksha) flanking each pavilion's stairs: club, crown, fierce colours
@@ -154,7 +161,7 @@ export function buildPalace(ctx) {
       for (const s of [-1, 1]) add(new THREE.CylinderGeometry(0.2, 0.22, 2.2, 6), col, s * 1.05, 5.1, 0.2);
       const club = new THREE.CylinderGeometry(0.22, 0.12, 4.6, 7); add(club, 0x5a3a24, 0.0, 3.3, 0.9);
       const geo = mergeGeometries(parts); geo.translate(x, -0.1, z);
-      decor.put(MAT.vc, geo);
+      liteB.put(MAT.vc, geo);
     };
     for (const sx of [-1, 1]) for (const s of [-1, 1]) giant(sx * (HALL_X - 2.5), s * 4.6, s > 0 ? 0x2f8a5a : 0xb83a2a);
   }
@@ -178,16 +185,23 @@ export function buildPalace(ctx) {
   floodPoles(ctx, g, { x: F.outX + 1.4, z: F.outZ + 1.6, base: -0.1, poleMat: MAT.gold, headMat: MAT.gold, glowMat: MAT.glow, put: putS });
 
   decor.build(g);
+  liteB.build(lite);
   solid.build(g, { castShadow: true, receiveShadow: true });
 
   const o = new THREE.Object3D();
-  let time = 0;
+  let time = 0, ultra = null;
   function update(dt) {
     time += dt;
     uTime.value = time;
+    if (ultra && ultra.group.visible) { ultra.update(dt, time); return; }
     jets.forEach(([x, z], i) => { o.position.set(x, 0.2, z); o.scale.set(1, 0.85 + 0.2 * Math.sin(time * 3 + i), 1); o.updateMatrix(); jetMesh.setMatrixAt(i, o.matrix); });
     jetMesh.instanceMatrix.needsUpdate = true;
   }
   function setTime(tod) { gilt.emissiveIntensity = tod === 'day' ? 0.15 : 0.75; }
-  return { g, fx, update, setTime, fog: { day: [80, 420], night: [50, 260] } };
+  // ULTRA (palace-ultra.js): see the header there. High is untouched; Ultra hides `lite` and builds its own detail.
+  const out = { g, fx, update, setTime, lite, fog: { day: [80, 420], night: [50, 260] } };
+  const baseFog = out.fog;
+  out.buildUltra = () => { ultra = buildPalaceUltra({ ...ctx, PX, PZ, POOL_Z0, POOL_Z1, HALL_X, jets, ornMat: MAT.orn, roofTex, roofNor }, uTime); return ultra.group; };
+  out.onUltra = (on) => { jetLights.visible = !on; out.fog = on ? { day: baseFog.day, night: [60, 560] } : baseFog; if (ctx.applyFog) ctx.applyFog(); };
+  return out;
 }

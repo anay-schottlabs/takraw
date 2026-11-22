@@ -2,10 +2,12 @@
 // long-tail boats pulled up on the shore, a headland of karst cliffs off each end, palms + beach huts + straw umbrellas behind.
 // DAY: bright sea, loungers, boats rocking in the shallows. NIGHT: tiki torches along the shore, fire dancers spinning fire,
 // the beach bars' lanterns, moonlight on the water.
+// ULTRA (beach-ultra.js) swaps all of that (`lite`) for a golden-hour sunset bay opening past the far end of the court.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rnd, makeWater, festoons, floodPoles, boundaryRail, paint, vcMat, palms } from './props.js';
 import { makeEmbers, personGeometry } from './life.js';
+import { buildBeachUltra } from './beach-ultra.js';
 
 const SEA_Y = -0.62;
 // the sand shelves from y −0.12 at SHORE−2 at 0.09 per metre, so it meets the sea here:
@@ -14,6 +16,7 @@ export function buildBeach(ctx) {
   const { F, xf, makeBatch, texLoader, glowTexture, slope } = ctx;
   const g = new THREE.Group(); g.name = 'beach';
   const fx = new THREE.Group(); g.add(fx);
+  const lite = new THREE.Group(); lite.name = 'beach-lite'; g.add(lite);   // everything the Ultra sunset bay replaces
   const R = rnd(5151);
   const uTime = { value: 0 };
   const decor = makeBatch(), solid = makeBatch();
@@ -49,10 +52,10 @@ export function buildBeach(ctx) {
     geo.computeVertexNormals();
     const sand = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }));
     sand.receiveShadow = true;
-    g.add(sand);
+    lite.add(sand);
     const sea = makeWater(texLoader, uTime, { w: 900, d: 700, color: 0x1f7f8f, opacity: 0.88, repeat: [50, 40] });
     sea.position.set(0, SEA_Y, SHORE + 340);
-    g.add(sea);
+    lite.add(sea);
   }
   // breaking foam: a white band that washes up and back along the shoreline
   const foamMat = (() => {
@@ -68,14 +71,14 @@ export function buildBeach(ctx) {
   for (let i = 0; i < 2; i++) {
     const f = new THREE.Mesh(new THREE.PlaneGeometry(600, 3.6), foamMat.clone());
     f.rotation.x = -Math.PI / 2; f.renderOrder = 3;
-    g.add(f);
+    lite.add(f);
     foams.push({ f, ph: i * Math.PI });
   }
 
   const crests = [];
   for (let i = 0; i < 9; i++) {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(60 + Math.random() * 60, 0.9), foamMat.clone());
-    m.rotation.x = -Math.PI / 2; m.renderOrder = 3; g.add(m);
+    m.rotation.x = -Math.PI / 2; m.renderOrder = 3; lite.add(m);
     crests.push({ m, x: -150 + i * 38 + Math.random() * 10, t: i / 9 });
   }
 
@@ -115,8 +118,8 @@ export function buildBeach(ctx) {
       karst(sx * 104, SHORE - 10, 46, 16, 97 + sx);
       karst(sx * 118, -18, 52, 18, 101 + sx);
     }
-    g.add(new THREE.Mesh(mergeGeometries(rock), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true })));
-    g.add(new THREE.Mesh(mergeGeometries(green), new THREE.MeshStandardMaterial({ color: 0x3f6a32, roughness: 0.9, flatShading: true })));
+    lite.add(new THREE.Mesh(mergeGeometries(rock), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true })));
+    lite.add(new THREE.Mesh(mergeGeometries(green), new THREE.MeshStandardMaterial({ color: 0x3f6a32, roughness: 0.9, flatShading: true })));
   }
 
   /* ---------------- long-tail boats pulled up on the shore + two out on the water ---------------- */
@@ -141,7 +144,7 @@ export function buildBeach(ctx) {
       const eng = new THREE.BoxGeometry(0.6, 0.45, 0.45); eng.translate(-3.2, 1.15, 0); P.push(paint(eng, 0x8a8f96));
       const geo = mergeGeometries(P);
       const m = new THREE.Mesh(geo, MAT.vc);
-      g.add(m);
+      lite.add(m);
       return m;
     };
     for (let i = 0; i < 6; i++) {
@@ -161,7 +164,7 @@ export function buildBeach(ctx) {
       spots.push([x, -0.12, z, 0.85 + R() * 0.45, R() * 6, (R() - 0.5) * 0.25]);
     }
     for (const sx of [-1, 1]) for (let i = 0; i < 6; i++) spots.push([sx * (F.outX + 18 + i * 9 + R() * 3), -0.12, SHORE - 4 - R() * 6, 0.9 + R() * 0.4, R() * 6, sx * 0.2]);
-    g.add(palms(spots, uTime));
+    lite.add(palms(spots, uTime));
     // beach huts on stilts with steep thatch roofs + lantern-lit bars
     for (const [x, rz] of [[-30, 0.1], [-12, -0.1], [10, 0.05], [30, -0.15], [52, 0.1], [-52, -0.05]]) {
       const z = -(F.outZ + 11);
@@ -208,7 +211,7 @@ export function buildBeach(ctx) {
       const h = new THREE.SphereGeometry(0.13, 8, 6); h.translate(x, SEA_Y + 0.18, z); parts.push(paint(h, skin[i % skin.length]));
       const s = new THREE.SphereGeometry(0.22, 8, 5); s.scale(1.3, 0.4, 0.8); s.translate(x, SEA_Y + 0.02, z); parts.push(paint(s, swim[i % swim.length]));
     }
-    g.add(new THREE.Mesh(mergeGeometries(parts), MAT.vcFlat));
+    lite.add(new THREE.Mesh(mergeGeometries(parts), MAT.vcFlat));
   }
   /* ---------------- a wooden jetty out into the bay + rocks at the headlands ---------------- */
   {
@@ -235,7 +238,7 @@ export function buildBeach(ctx) {
       for (const x of xs) { put(MAT.wood, new THREE.CylinderGeometry(0.06, 0.08, 3.8, 6), x, 1.78, zz); put(MAT.glow, new THREE.SphereGeometry(0.1, 6, 5), x, 3.72, zz); }
       for (let i = 0; i < xs.length - 1; i++) pairs.push([new THREE.Vector3(xs[i], 3.5, zz), new THREE.Vector3(xs[i + 1], 3.5, zz)]);
     }
-    g.add(festoons(pairs, { sag: 0.55, n: 12, colors: [0xffd27a, 0xff8a5a, 0x7fd8ff], size: 0.12 }));
+    lite.add(festoons(pairs, { sag: 0.55, n: 12, colors: [0xffd27a, 0xff8a5a, 0x7fd8ff], size: 0.12 }));
   }
 
   /* ---------------- night: tiki torches along the shore, fire dancers ---------------- */
@@ -264,13 +267,14 @@ export function buildBeach(ctx) {
     }
   }
 
-  decor.build(g);
+  decor.build(lite);
   solid.build(g, { castShadow: true, receiveShadow: true });
 
-  let time = 0;
+  let time = 0, ultra = null, ultraOn = false;
   function update(dt) {
     time += dt;
     uTime.value = time;
+    if (ultraOn && ultra) { ultra.update(dt, time); return; }      // the night beach is hidden on Ultra
     for (const fo of foams) {
       const k = Math.sin(time * 0.55 + fo.ph);
       fo.f.position.set(0, SEA_Y + 0.05, WATERLINE + 0.4 - k * 1.6);   // washes up the sand and back
@@ -288,11 +292,25 @@ export function buildBeach(ctx) {
     }
     if (night.visible) for (const d of dancers) d.spin.rotation.z = time * 9 + d.ph;
   }
+  let tod0 = 'night';
   function setTime(tod) {
-    night.visible = tod !== 'day';
+    tod0 = tod;
+    night.visible = tod !== 'day' && !ultraOn;                  // torches + fire dancers (none at the Ultra sunset)
     const k = tod === 'day' ? 1 : 0.32;                         // moonlit foam, not glowing foam
     for (const fo of foams) fo.f.material.color.setScalar(k);
     for (const cr of crests) cr.m.material.color.setScalar(k);
   }
-  return { g, fx, update, setTime, fog: { day: [90, 700], night: [60, 380] } };
+  // ULTRA (see beach-ultra.js): the night beach becomes a golden-hour sunset bay opening toward +x — sky, light and fog are
+  // restyled through `look` while Ultra is on (main.js applyFog), and the people are gone
+  const out = { g, fx, update, setTime, lite, fog: { day: [90, 700], night: [60, 380] } };
+  const fog0 = out.fog;
+  out.buildUltra = () => { ultra = buildBeachUltra(ctx, uTime); return ultra.group; };
+  out.onUltra = (on) => {
+    ultraOn = on;
+    out.fog = on && ultra ? ultra.fog : fog0;
+    out.look = on && ultra ? ultra.look : undefined;
+    setTime(tod0);
+    if (ctx.applyFog) ctx.applyFog();
+  };
+  return out;
 }

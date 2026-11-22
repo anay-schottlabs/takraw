@@ -7,6 +7,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rnd, makeWater, shophouseRow, festoons, floodPoles, boundaryRail, paint, vcMat } from './props.js';
 import { personGeometry, makePeckers } from './life.js';
 import { treeClumps } from './props.js';
+import { buildRiversideUltra } from './riverside-ultra.js';
 
 const WATER_Y = -1.25;
 
@@ -19,6 +20,15 @@ export function buildRiverside(ctx) {
   const decor = makeBatch(), solid = makeBatch();
   const put = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => decor.put(mat, xf(geo, x, y, z, ry, rx, rz));
   const putS = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => solid.put(mat, xf(geo, x, y, z, ry, rx, rz));
+  // pieces Ultra rebuilds (riverside-ultra.js) go in `lite` (hidden on Ultra): water, banks, deck + piles, shophouses, lamps, stalls,
+  // trees, the far temples, bridges, boats and the flat light streaks
+  const lite = new THREE.Group(); lite.name = 'riverside-lite'; g.add(lite);
+  const fxLite = new THREE.Group(); fx.add(fxLite);
+  const liteDecor = makeBatch(), liteSolid = makeBatch();
+  const lampXs = [], stalls = [], treeSpots = [], reflect = [];   // (handed to Ultra; `reflect` = High pieces Ultra's water mirrors)
+  const addR = (o) => { g.add(o); reflect.push(o); return o; };
+  const putL = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => liteDecor.put(mat, xf(geo, x, y, z, ry, rx, rz));
+  const putLS = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => liteSolid.put(mat, xf(geo, x, y, z, ry, rx, rz));
   const tex = (n, rep = 1, srgb = false) => { const t = texLoader.load(`assets/pond/${n}`); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep, rep); t.anisotropy = 8; if (srgb) t.colorSpace = THREE.SRGBColorSpace; return t; };
   const MAT = {
     teak: new THREE.MeshStandardMaterial({ map: tex('planks_diff.jpg', 1, true), normalMap: tex('planks_nor_gl.jpg'), color: 0xc49a72, roughness: 0.75 }),
@@ -39,61 +49,62 @@ export function buildRiverside(ctx) {
   /* ---------------- water + banks ---------------- */
   const water = makeWater(texLoader, uTime, { w: 420, d: 300, color: 0x2f4a3c, opacity: 1, repeat: [26, 18] });
   water.position.set(0, WATER_Y, 70);
-  g.add(water);
+  lite.add(water);
   // near quay: wall + street paving + kerb
-  put(MAT.stone, new THREE.BoxGeometry(400, 1.6, 1.2), 0, WATER_Y + 0.6, QUAY_Z);
-  put(MAT.paving, new THREE.BoxGeometry(400, 0.4, 40), 0, -0.05 - 0.2 + 0.2, QUAY_Z - 20.6);
+  putL(MAT.stone, new THREE.BoxGeometry(400, 1.6, 1.2), 0, WATER_Y + 0.6, QUAY_Z);
+  putL(MAT.paving, new THREE.BoxGeometry(400, 0.4, 40), 0, -0.05 - 0.2 + 0.2, QUAY_Z - 20.6);
   // far bank: embankment + ground
-  put(MAT.stone, new THREE.BoxGeometry(420, 2.2, 1.4), 0, WATER_Y + 0.9, FAR_Z);
-  put(MAT.paving, new THREE.BoxGeometry(420, 0.4, 60), 0, WATER_Y + 1.8, FAR_Z + 30);
+  putL(MAT.stone, new THREE.BoxGeometry(420, 2.2, 1.4), 0, WATER_Y + 0.9, FAR_Z);
+  putL(MAT.paving, new THREE.BoxGeometry(420, 0.4, 60), 0, WATER_Y + 1.8, FAR_Z + 30);
 
   /* ---------------- the pier: deck around the court, pilings, a walkway to the quay ---------------- */
   const PX = F.outX + 2.6, PZ0 = QUAY_Z, PZ1 = F.outZ + 2.2;
-  putS(MAT.teak, new THREE.BoxGeometry(PX * 2, 0.22, PZ1 - PZ0), 0, -0.23, (PZ0 + PZ1) / 2);
+  putLS(MAT.teak, new THREE.BoxGeometry(PX * 2, 0.22, PZ1 - PZ0), 0, -0.23, (PZ0 + PZ1) / 2);
   // pilings stop just under the deck (top at y = -0.36) — only the outer rows are visible
   const PILE_TOP = -0.36, PILE_BOT = WATER_Y - 2.6;
-  for (const z of [PZ1 - 0.3, PZ0 + 0.6]) for (let x = -PX + 0.3; x <= PX - 0.29; x += 2.4) put(MAT.pile, new THREE.CylinderGeometry(0.17, 0.19, PILE_TOP - PILE_BOT, 7), x, (PILE_TOP + PILE_BOT) / 2, z);
-  for (const x of [-PX + 0.3, PX - 0.3]) for (let z = PZ0 + 3; z < PZ1 - 1; z += 2.4) put(MAT.pile, new THREE.CylinderGeometry(0.17, 0.19, PILE_TOP - PILE_BOT, 7), x, (PILE_TOP + PILE_BOT) / 2, z);
+  for (const z of [PZ1 - 0.3, PZ0 + 0.6]) for (let x = -PX + 0.3; x <= PX - 0.29; x += 2.4) putL(MAT.pile, new THREE.CylinderGeometry(0.17, 0.19, PILE_TOP - PILE_BOT, 7), x, (PILE_TOP + PILE_BOT) / 2, z);
+  for (const x of [-PX + 0.3, PX - 0.3]) for (let z = PZ0 + 3; z < PZ1 - 1; z += 2.4) putL(MAT.pile, new THREE.CylinderGeometry(0.17, 0.19, PILE_TOP - PILE_BOT, 7), x, (PILE_TOP + PILE_BOT) / 2, z);
   // fascia
-  for (const [len, x, z, ry] of [[PX * 2, 0, PZ1, 0], [PZ1 - PZ0, -PX, (PZ0 + PZ1) / 2, Math.PI / 2], [PZ1 - PZ0, PX, (PZ0 + PZ1) / 2, Math.PI / 2]]) putS(MAT.teak, new THREE.BoxGeometry(len, 0.4, 0.14), x, -0.35, z, ry);
+  for (const [len, x, z, ry] of [[PX * 2, 0, PZ1, 0], [PZ1 - PZ0, -PX, (PZ0 + PZ1) / 2, Math.PI / 2], [PZ1 - PZ0, PX, (PZ0 + PZ1) / 2, Math.PI / 2]]) putLS(MAT.teak, new THREE.BoxGeometry(len, 0.4, 0.14), x, -0.35, z, ry);
   // boundary rail (teak posts, red rail) on the ball boundary
   boundaryRail(F, putS, { postMat: MAT.teak, railMat: MAT.red, step: 1.8 });
   // mooring posts + a tyre or two along the pier's river edge
-  for (let x = -PX + 1.2; x < PX; x += 4.6) { put(MAT.pile, new THREE.CylinderGeometry(0.14, 0.16, 1.4, 7), x, 0.4, PZ1 - 0.2); put(MAT.white, new THREE.CylinderGeometry(0.16, 0.16, 0.06, 7), x, 1.12, PZ1 - 0.2); }
+  for (let x = -PX + 1.2; x < PX; x += 4.6) { putL(MAT.pile, new THREE.CylinderGeometry(0.14, 0.16, 1.4, 7), x, 0.4, PZ1 - 0.2); putL(MAT.white, new THREE.CylinderGeometry(0.16, 0.16, 0.06, 7), x, 1.12, PZ1 - 0.2); }
 
   /* ---------------- floodlights + festoons ---------------- */
   const poles = floodPoles(ctx, g, { x: F.outX + 1.2, z: F.outZ + 1.4, base: 0, poleMat: MAT.red, headMat: MAT.gold, glowMat: MAT.glow, put: putS });
-  g.add(festoons([[new THREE.Vector3(-poles[3][0], 6.5, F.outZ + 1.4), new THREE.Vector3(poles[3][0], 6.5, F.outZ + 1.4)],
+  addR(festoons([[new THREE.Vector3(-poles[3][0], 6.5, F.outZ + 1.4), new THREE.Vector3(poles[3][0], 6.5, F.outZ + 1.4)],
     [new THREE.Vector3(-poles[3][0], 6.5, -(F.outZ + 1.4)), new THREE.Vector3(poles[3][0], 6.5, -(F.outZ + 1.4))]]));
 
   /* ---------------- quay street: shophouses, stalls, lamp posts with festoons ---------------- */
   const SHOP_Z = QUAY_Z - 12;
   const near = shophouseRow({ x0: -90, x1: 90, z: SHOP_Z, y: 0, face: 1, seed: 11, minF: 2, maxF: 4 });
-  g.add(near.group);
+  lite.add(near.group);
   const far = shophouseRow({ x0: -120, x1: 120, z: FAR_Z + 9, y: WATER_Y + 2, face: -1, seed: 23, minF: 2, maxF: 5, depth: 9 });
-  g.add(far.group);
+  lite.add(far.group);
   const shopMats = [...near.mats, ...far.mats];
   {
     const stallCols = [0xc0392b, 0x1f5fa8, 0x2f7a4a, 0xe2a400, 0xf2f2f2];
-    const lampXs = [];
+    lampXs.length = 0;
     for (let x = -46; x <= 46; x += 11.5) {
       if (Math.abs(x) < 1) continue;
       lampXs.push(x);
-      put(MAT.pile, new THREE.CylinderGeometry(0.07, 0.09, 4.2, 6), x, 2.1, QUAY_Z - 1.4);
-      put(MAT.glow, new THREE.SphereGeometry(0.22, 8, 6), x, 4.35, QUAY_Z - 1.4);
+      putL(MAT.pile, new THREE.CylinderGeometry(0.07, 0.09, 4.2, 6), x, 2.1, QUAY_Z - 1.4);
+      putL(MAT.glow, new THREE.SphereGeometry(0.22, 8, 6), x, 4.35, QUAY_Z - 1.4);
     }
     const pairs = [];
     for (let i = 0; i < lampXs.length - 1; i++) pairs.push([new THREE.Vector3(lampXs[i], 4.2, QUAY_Z - 1.4), new THREE.Vector3(lampXs[i + 1], 4.2, QUAY_Z - 1.4)]);
-    g.add(festoons(pairs, { sag: 0.6, n: 14, colors: [0xffe2a0, 0xfff0c8], size: 0.09, bright: 3 }));
+    addR(festoons(pairs, { sag: 0.6, n: 14, colors: [0xffe2a0, 0xfff0c8], size: 0.09, bright: 3 }));
     // food stalls under umbrellas between the lamps
     for (let x = -52; x <= 52; x += 5.5) {
       if (Math.abs(x) < PX + 1 && R() < 0.5) continue;
       const z = QUAY_Z - 4.5 - R() * 3;
-      put(MAT.white, new THREE.BoxGeometry(1.8, 0.85, 0.9), x, 0.42, z);
-      put(MAT.vc, paint(new THREE.ConeGeometry(1.5, 0.6, 10, 1), stallCols[Math.floor(R() * stallCols.length)]), x, 2.45, z);
-      put(MAT.pile, new THREE.CylinderGeometry(0.03, 0.03, 2.2, 5), x, 1.2, z);
-      for (let k = 0; k < 4; k++) put(MAT.vc, paint(new THREE.SphereGeometry(0.12, 6, 5), [0xff8a2a, 0x7fbf3a, 0xe8d24a, 0xd8382e][k]), x - 0.6 + k * 0.4, 0.95, z);
-      put(MAT.glow, new THREE.SphereGeometry(0.08, 6, 5), x, 2.1, z);
+      stalls.push([x, z]);
+      putL(MAT.white, new THREE.BoxGeometry(1.8, 0.85, 0.9), x, 0.42, z);
+      putL(MAT.vc, paint(new THREE.ConeGeometry(1.5, 0.6, 10, 1), stallCols[Math.floor(R() * stallCols.length)]), x, 2.45, z);
+      putL(MAT.pile, new THREE.CylinderGeometry(0.03, 0.03, 2.2, 5), x, 1.2, z);
+      for (let k = 0; k < 4; k++) putL(MAT.vc, paint(new THREE.SphereGeometry(0.12, 6, 5), [0xff8a2a, 0x7fbf3a, 0xe8d24a, 0xd8382e][k]), x - 0.6 + k * 0.4, 0.95, z);
+      putL(MAT.glow, new THREE.SphereGeometry(0.08, 6, 5), x, 2.1, z);
     }
   }
 
@@ -120,44 +131,44 @@ export function buildRiverside(ctx) {
       person(x, z, sx > 0 ? -Math.PI / 2 : Math.PI / 2, R() < 0.3, 0.9 + R() * 0.15);
     }
     const mesh = new THREE.Mesh(mergeGeometries(parts.map((p) => { p.translate(0, -0.24, 0); return p; })), vcMat({ flatShading: true }));
-    g.add(mesh);
+    g.add(mesh); reflect.push(mesh);
     g.add(makePeckers(Array.from({ length: 14 }, () => [(R() - 0.5) * 60, 0.12, QUAY_Z - 2 - R() * 4, R() * 6]), 0x8c90a2).g);
   }
   // planter trees along the quay
   {
     const spots = [];
-    for (let x = -80; x <= 80; x += 14) { if (Math.abs(x) < PX + 2) continue; spots.push([x, 0.15, QUAY_Z - 10.2, 0.8 + R() * 0.3, R() * 6]); put(MAT.white, new THREE.CylinderGeometry(0.9, 0.8, 0.5, 10), x, 0.4, QUAY_Z - 10.2); }
-    g.add(treeClumps(spots, { leaf: 0x3a6a32 }));
+    for (let x = -80; x <= 80; x += 14) { if (Math.abs(x) < PX + 2) continue; spots.push([x, 0.15, QUAY_Z - 10.2, 0.8 + R() * 0.3, R() * 6]); treeSpots.push(x); putL(MAT.white, new THREE.CylinderGeometry(0.9, 0.8, 0.5, 10), x, 0.4, QUAY_Z - 10.2); }
+    lite.add(treeClumps(spots, { leaf: 0x3a6a32 }));
   }
 
   /* ---------------- far bank: a temple prang among trees, a riverside sala ---------------- */
   {
     const prang = new THREE.LatheGeometry([[0, 0], [5.5, 0], [5.5, 1.2], [4.6, 1.2], [4.4, 3.5], [3.6, 3.7], [3.4, 6.5], [2.6, 6.8], [2.2, 10], [1.4, 11], [1.0, 14], [0.4, 16.5], [0.15, 19], [0, 21]].map(([r, y]) => new THREE.Vector2(r, y)), 8);
     for (const [x, s] of [[34, 1.25], [-58, 0.9]]) {
-      put(MAT.white, prang.clone().scale(s, s, s), x, WATER_Y + 2, FAR_Z + 26);
-      put(MAT.gold, new THREE.ConeGeometry(0.3 * s, 3 * s, 6), x, WATER_Y + 2 + 21 * s, FAR_Z + 26);
+      putL(MAT.white, prang.clone().scale(s, s, s), x, WATER_Y + 2, FAR_Z + 26);
+      putL(MAT.gold, new THREE.ConeGeometry(0.3 * s, 3 * s, 6), x, WATER_Y + 2 + 21 * s, FAR_Z + 26);
     }
     const crown = new THREE.IcosahedronGeometry(2.2, 0); crown.scale(1.2, 0.9, 1.2);
     for (let i = 0; i < 26; i++) {
       const x = -130 + i * 10 + R() * 4, z = FAR_Z + 14 + R() * 18;
-      put(MAT.green, crown.clone().scale(1 + R() * 0.8, 1 + R() * 0.8, 1 + R() * 0.8), x, WATER_Y + 2 + 6 + R() * 3, z);
-      put(MAT.pile, new THREE.CylinderGeometry(0.25, 0.35, 7, 6), x, WATER_Y + 2 + 3.5, z);
+      putL(MAT.green, crown.clone().scale(1 + R() * 0.8, 1 + R() * 0.8, 1 + R() * 0.8), x, WATER_Y + 2 + 6 + R() * 3, z);
+      putL(MAT.pile, new THREE.CylinderGeometry(0.25, 0.35, 7, 6), x, WATER_Y + 2 + 3.5, z);
     }
   }
 
   /* ---------------- bridges up and down the river (one off each end) ---------------- */
   for (const [bx, style] of [[150, 'steel'], [-150, 'arch']]) {
     const span = FAR_Z - QUAY_Z + 20, cz = (FAR_Z + QUAY_Z) / 2;
-    put(MAT.stone, new THREE.BoxGeometry(6, 1, span), bx, 4.5, cz);
-    for (const s of [-1, 1]) put(MAT.red, new THREE.BoxGeometry(0.2, 1.0, span), bx + s * 2.9, 5.4, cz);
+    putL(MAT.stone, new THREE.BoxGeometry(6, 1, span), bx, 4.5, cz);
+    for (const s of [-1, 1]) putL(MAT.red, new THREE.BoxGeometry(0.2, 1.0, span), bx + s * 2.9, 5.4, cz);
     if (style === 'arch') {
-      for (let i = 0; i <= 12; i++) { const t = i / 12, z = QUAY_Z + t * (FAR_Z - QUAY_Z); put(MAT.stone, new THREE.BoxGeometry(5.6, 1.2, (FAR_Z - QUAY_Z) / 12 + 0.2), bx, WATER_Y + 1 + Math.sin(Math.PI * t) * 3.2, z); }
+      for (let i = 0; i <= 12; i++) { const t = i / 12, z = QUAY_Z + t * (FAR_Z - QUAY_Z); putL(MAT.stone, new THREE.BoxGeometry(5.6, 1.2, (FAR_Z - QUAY_Z) / 12 + 0.2), bx, WATER_Y + 1 + Math.sin(Math.PI * t) * 3.2, z); }
     } else {
-      for (const s of [-1, 1]) for (let i = 0; i <= 10; i++) { const z = QUAY_Z + (i / 10) * (FAR_Z - QUAY_Z); put(MAT.white, new THREE.BoxGeometry(0.25, 6, 0.25), bx + s * 2.8, 8, z); }
-      for (const s of [-1, 1]) put(MAT.white, new THREE.BoxGeometry(0.3, 0.3, span), bx + s * 2.8, 11, cz);
+      for (const s of [-1, 1]) for (let i = 0; i <= 10; i++) { const z = QUAY_Z + (i / 10) * (FAR_Z - QUAY_Z); putL(MAT.white, new THREE.BoxGeometry(0.25, 6, 0.25), bx + s * 2.8, 8, z); }
+      for (const s of [-1, 1]) putL(MAT.white, new THREE.BoxGeometry(0.3, 0.3, span), bx + s * 2.8, 11, cz);
     }
-    for (let z = QUAY_Z; z <= FAR_Z; z += 9) for (const s of [-1, 1]) { put(MAT.pile, new THREE.CylinderGeometry(0.06, 0.06, 2, 5), bx + s * 2.6, 6, z); put(MAT.glow, new THREE.SphereGeometry(0.2, 7, 5), bx + s * 2.6, 7.1, z); }
-    for (const z of [QUAY_Z + 18, FAR_Z - 18]) put(MAT.stone, new THREE.BoxGeometry(4, 6.5, 5), bx, WATER_Y + 2.2, z);   // piers
+    for (let z = QUAY_Z; z <= FAR_Z; z += 9) for (const s of [-1, 1]) { putL(MAT.pile, new THREE.CylinderGeometry(0.06, 0.06, 2, 5), bx + s * 2.6, 6, z); putL(MAT.glow, new THREE.SphereGeometry(0.2, 7, 5), bx + s * 2.6, 7.1, z); }
+    for (const z of [QUAY_Z + 18, FAR_Z - 18]) putL(MAT.stone, new THREE.BoxGeometry(4, 6.5, 5), bx, WATER_Y + 2.2, z);   // piers
   }
 
   /* ---------------- boats ---------------- */
@@ -195,7 +206,7 @@ export function buildRiverside(ctx) {
       const b = new THREE.Group();
       b.add(new THREE.Mesh(mergeGeometries(parts), MAT.vc));
       b.add(new THREE.Mesh(mergeGeometries(glows.map((x) => x.toNonIndexed())), MAT.glow));
-      g.add(b);
+      lite.add(b);
       return b;
     };
     for (let i = 0; i < 5; i++) {
@@ -223,17 +234,20 @@ export function buildRiverside(ctx) {
     const o = new THREE.Object3D();
     list.forEach(([x, z, sx, sz], i) => { o.position.set(x, WATER_Y + 0.02, z); o.scale.set(sx, 1, sz); o.updateMatrix(); im.setMatrixAt(i, o.matrix); });
     im.computeBoundingSphere(); im.renderOrder = 3;
-    fx.add(im);
+    fxLite.add(im);
   }
 
   decor.build(g);
-  solid.build(g, { castShadow: true, receiveShadow: true });
+  { const sg = new THREE.Group(); g.add(sg); solid.build(sg, { castShadow: true, receiveShadow: true }); reflect.push(sg); }
+  liteDecor.build(lite);
+  liteSolid.build(lite, { castShadow: true, receiveShadow: true });
 
-  let time = 0;
-  function update(dt) {
+  let time = 0, ultra = null;
+  function update(dt, pr) {
     time += dt;
     uTime.value = time;
-    for (const bt of boats) {
+    if (ultra && ultra.group.visible) ultra.update(dt, time, pr);
+    if (lite.visible) for (const bt of boats) {
       bt.x += bt.v * dt;
       if (!bt.drift && Math.abs(bt.x) > 160) bt.x = -Math.sign(bt.x) * 160;
       if (bt.drift && Math.abs(bt.x - bt.home) > 3) bt.v = -bt.v;
@@ -245,5 +259,15 @@ export function buildRiverside(ctx) {
     const night = tod !== 'day';
     for (const m of shopMats) m.emissiveIntensity = night ? 1.1 : 0;
   }
-  return { g, fx, update, setTime };
+  // ULTRA (riverside-ultra.js): the river bends away at both ends; mirror-reflecting animated water with boat wakes; a teak pier
+  // of real planks, piles, bracing and rope; detailed shophouses, a floodlit prang and golden chedi, two lit bridges, a city skyline
+  // and its glow off to the sides; boats, barges and ferries on the river; mist, moths, fireflies and egrets
+  const out = { g, fx, update, setTime, lite };
+  out.buildUltra = () => {
+    ultra = buildRiversideUltra({ ...ctx, WATER_Y, QUAY_Z, FAR_Z, PX, PZ0, PZ1, lampXs, stalls, treeSpots, poles, uTime });
+    for (const o of reflect) o.traverse((m) => { if (m.isMesh) m.layers.enable(ultra.REFL_LAYER); });   // the pier's festoons, floodlights and crowd show in the water
+    return ultra.group;
+  };
+  out.onUltra = (on) => { fxLite.visible = !on; out.fog = on ? { night: [55, 385] } : undefined; ctx.applyFog(); };
+  return out;
 }

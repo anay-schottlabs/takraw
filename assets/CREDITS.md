@@ -29,3 +29,20 @@ Cloud Monastery — ULTRA graphics (`monastery-ultra.js`, loaded only when Graph
 - `monastery-ultra/wall_diff.jpg` — "Japanese Stone Wall" (Poly Haven, CC0; 512px, stored greyscale) — retaining walls, parapets, stairs, podium (triplanar detail + bump)
 - `monastery-ultra/cliff_diff.jpg` — "Cliff Side" (Poly Haven, CC0; 1k, stored greyscale) — the summit cliffs and the distant peaks (triplanar detail + bump)
 Everything else in Ultra (the cloud sea, peaks, pines, chedis, viharns, naga, monks, lanterns, mist) is generated in code.
+
+Palace Garden — ULTRA graphics (`palace-ultra.js`):
+- `palace-ultra/marble_*` — "Marble 01" (Poly Haven, CC0; 1k diffuse stored greyscale + 1k GL normal) — the polished marble terrace and, as triplanar detail, the marble podiums, posts and chedi bases
+- reuses `temple-ultra/clay_plaster_diff.jpg` (plaster detail), `temple-ultra/leafy_grass_*` (lawns, topiary + hedge leaf detail), `temple/roof_*` (glazed roof tiles) and `pond/water_nor.jpg` (pool ripples)
+Everything else (pavilions, salas, yaksha guardians, topiary, chedis, prangs, the wall, trees, skyline, guards, particles) is generated in code.
+Riverside Pier — ULTRA graphics (`riverside-ultra.js`):
+- `riverside-ultra/rough_wood_*` — "Rough Wood" by Rob Tuytel (Poly Haven, CC0; 1k diffuse, 512px GL normal) — the pier's planks, piles, beams and bollards (tinted teak in-engine)
+Everything else in Riverside Ultra (the bending river and its mirror-reflecting water + wakes, banks, shophouses, prang, golden chedi, riverside wat, bridges, skyline, boats, hyacinth, mist, egrets) is generated in code; it reuses `pond/water_nor.jpg`, `temple/paving_*`, `temple/roof_diff.jpg` and `temple-ultra/clay_plaster_diff.jpg`.
+
+Karst Beach — ULTRA graphics (`beach-ultra.js`, the golden-hour sunset bay):
+- `beach-ultra/coast_sand_*` — "Coast Sand 01" (Poly Haven, CC0; 512px diffuse + GL normal) — sand detail + ripples
+- `beach-ultra/rock_face_*` — "Rock Face 03" (Poly Haven, CC0; 512px diffuse + GL normal) — karst limestone and beach rock detail
+The sunset sky, sea, karst towers, palms, boats, huts, jungle and birds are generated in code; the sea reuses `pond/water_nor.jpg`.
+
+Night Market Alley — ULTRA graphics (`market-ultra.js`, `market-atlas.js`, `market-crowd.js`):
+- `market-ultra/asphalt_*` — "Asphalt 02" (Poly Haven, CC0; 1k diffuse + GL normal, 512px roughness) — the wet street (the puddle mask reuses `temple-ultra/clay_plaster_diff.jpg` as noise)
+Everything else (shophouses, alleys, stalls, food, signs, neon, lanterns, wires, the crowd, cats, scooters, steam / smoke / embers) is generated in code; windows, shop interiors, signs, menus, price cards and fabric prints are painted onto canvas atlases in `market-atlas.js`.

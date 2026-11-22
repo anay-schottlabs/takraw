@@ -79,6 +79,15 @@ camera.position.set(-16, 7, 10);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
+// one bad pixel (NaN / Inf from any shader) would be smeared by bloom into a huge white blob: scrub them first
+composer.addPass(new ShaderPass({
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    void main(){ vec4 c = texture2D(tDiffuse, vUv);
+      if (any(isnan(c)) || any(isinf(c))) c = vec4(0.0, 0.0, 0.0, 1.0);
+      gl_FragColor = vec4(min(c.rgb, vec3(64.0)), c.a); }`,
+}));
 const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2), 0.4, 0.45, 1.6); // only true emitters (lamps, bulbs, rings) glow
 composer.addPass(bloom);
 // Focus pass: darkens and desaturates the edges so the court, players and ball carry the eye
@@ -698,29 +707,30 @@ function disposeVenue(key) {
   });
 }
 const currentVenue = () => venues[venueKey(venue)] || null;
-// a map can ask for its own fog distances (e.g. the rooftop wants to see the far skyline)
+// a map can ask for its own fog distances (e.g. the rooftop wants to see the far skyline), and restyle the sky + light while
+// it's on screen with `look[time]` (e.g. Karst Beach's Ultra sunset): any of { sky (equirect texture: backdrop + environment),
+// fog (colour), key, keyI, keyPos, hemiSky, hemiGround, hemiI, envI, bgI, exposure, bloom, spots } — the rest come from TIMES
 function applyFog() {
   if (!timeOfDay) return;
-  const T = TIMES[timeOfDay], o = currentVenue() && currentVenue().fog && currentVenue().fog[timeOfDay];
+  const vn = currentVenue(), T = { ...TIMES[timeOfDay], ...(vn && vn.look && vn.look[timeOfDay]) }, o = vn && vn.fog && vn.fog[timeOfDay];
   scene.fog.near = o ? o[0] : T.fogN; scene.fog.far = o ? o[1] : T.fogF;
+  const sky = T.sky ? (T.sky.userData.sky ||= { tex: T.sky, env: pmrem.fromEquirectangular(T.sky).texture }) : skyFor(timeOfDay);
+  scene.background = sky.tex; scene.backgroundIntensity = T.bgI;
+  scene.environment = sky.env; scene.environmentIntensity = T.envI;
+  scene.fog.color.set(T.fog);
+  key.color.set(T.key); key.intensity = T.keyI; key.position.set(...(T.keyPos || LIGHT_POS[timeOfDay]));
+  hemi.color.set(T.hemiSky); hemi.groundColor.set(T.hemiGround); hemi.intensity = T.hemiI;
+  renderer.toneMappingExposure = T.exposure;
+  bloom.strength = T.bloom;
+  applySpots(T);
 }
-function applySpots() {
-  const T = TIMES[timeOfDay || 'night'];
+function applySpots(T = TIMES[timeOfDay || 'night']) {
   for (const sp of spotLights) { if (sp.userData.base === undefined) sp.userData.base = sp.intensity; sp.intensity = sp.userData.base * T.spots; }
 }
 function setTimeOfDay(t) {
   if (!TIMES[t]) t = 'night';
   timeOfDay = t;
-  const T = TIMES[t], sky = skyFor(t);
-  scene.background = sky.tex; scene.backgroundIntensity = T.bgI;
-  scene.environment = sky.env; scene.environmentIntensity = T.envI;
-  scene.fog.color.set(T.fog);
   applyFog();
-  key.color.set(T.key); key.intensity = T.keyI; key.position.set(...LIGHT_POS[t]);
-  hemi.color.set(T.hemiSky); hemi.groundColor.set(T.hemiGround); hemi.intensity = T.hemiI;
-  renderer.toneMappingExposure = T.exposure;
-  bloom.strength = T.bloom;
-  applySpots();
   for (const r of [templeGroup, boardsGroup, courtGroup]) applyGlow(r);
   for (const vn of Object.values(venues)) { applyGlow(vn.g); if (vn.setTime) vn.setTime(t); }
 }
