@@ -22,6 +22,7 @@ import { buildBamboo } from './bamboo.js';
 import { buildFestival } from './festival.js';
 import { buildPalace } from './palace.js';
 import { buildMonastery } from './monastery.js';
+import { buildCruise } from './cruise.js';
 
 /* =====================================================================
    FIELD SPEC — ISTAF sepak takraw court (metres)
@@ -635,7 +636,7 @@ function setCourtSize(size) {
 // court size (3v3 gets the bigger version), cached, and swapped in whole — nothing from one map is visible on another.
 let venue = 'temple';                 // map id on screen
 const venues = {};                    // `${id}:${size}` → { g, fx, update, setTime? }
-const VENUE_BUILDERS = { temple: buildTempleLife, pond: buildPond, terrace: buildTerrace, riverside: buildRiverside, rooftop: buildRooftop, market: buildMarket, beach: buildBeach, jungle: buildJungle, bamboo: buildBamboo, festival: buildFestival, palace: buildPalace, monastery: buildMonastery };   // (the temple's buildings live in main.js; this adds its life)
+const VENUE_BUILDERS = { temple: buildTempleLife, pond: buildPond, terrace: buildTerrace, riverside: buildRiverside, rooftop: buildRooftop, market: buildMarket, beach: buildBeach, jungle: buildJungle, bamboo: buildBamboo, festival: buildFestival, palace: buildPalace, monastery: buildMonastery, cruise: buildCruise };   // (the temple's buildings live in main.js; this adds its life)
 const venueKey = (id) => `${id}:${courtSize}`;
 function setVenue(id) {
   if (!VENUE_BUILDERS[id]) id = 'temple';
