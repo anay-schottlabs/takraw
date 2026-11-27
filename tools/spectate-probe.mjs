@@ -11,7 +11,8 @@ for (const m of mapsArg.split(',')) {
   const res = await p.evaluate(async ([m, size]) => {
     window.__takraw.setCourt(size); window.__reelAt(m, 0, 0.5); await new Promise((r) => setTimeout(r, 3000));
     const { scene, THREE } = window.__takraw.gfx;
-    const meshes = []; scene.traverseVisible((o) => { if ((o.isMesh || o.isInstancedMesh) && !(o.material && (o.material.blending === THREE.AdditiveBlending || (o.material.transparent && o.material.opacity < 0.3)))) meshes.push(o); });
+    const meshes = []; scene.traverseVisible((o) => { const mt = o.material, fxLike = mt && (mt.blending === THREE.AdditiveBlending || (mt.transparent && (mt.opacity < 0.3 || mt.depthWrite === false || mt.isShaderMaterial)));   // mist, beams, glows: not solid
+      if ((o.isMesh || o.isInstancedMesh) && !fxLike) meshes.push(o); });
     for (const m of meshes) for (const mt of [].concat(m.material)) mt.side = THREE.DoubleSide;
     scene.updateMatrixWorld(true);
     for (const m of meshes) { if (m.isInstancedMesh) m.computeBoundingSphere(); else if (m.geometry) { m.geometry.computeBoundingSphere(); m.geometry.computeBoundingBox(); } }

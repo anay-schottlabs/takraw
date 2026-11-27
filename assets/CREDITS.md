@@ -53,3 +53,8 @@ Jungle Waterfall — ULTRA graphics (`jungle-ultra.js`):
 - `jungle-ultra/mossy_rock_*` — "Mossy Rock" (Poly Haven, CC0; 1k diffuse + 512px GL normal) — the gorge wall and boulders (triplanar detail + bump)
 - reuses `temple-ultra/bark_brown_02_*` (bark, lianas, logs) and `pond/water_nor.jpg` (pool + stream ripples)
 Everything else (waterfall, pool, stream, trees, palms, bananas, ferns, vines, fungi, fireflies, moonbeams, bats, hornbills, ridges, mist; the foliage atlas is painted on a canvas) is generated in code.
+Bamboo Forest — ULTRA graphics (`bamboo-ultra.js`):
+- `bamboo-ultra/litter_*` — "Forest Leaves 03" (Poly Haven, CC0; 1k diffuse, 512px GL normal) — the leaf-litter forest floor
+- `bamboo-ultra/mossy_rock_*` — "Mossy Rock" (Poly Haven, CC0; 512px diffuse + GL normal) — stepping stones, lanterns, plinth, basin, bridge, rocks (triplanar)
+- reuses `pond/water_nor.jpg` (stream ripples)
+Everything else (the culms, leaf sprays, ferns + dwarf bamboo atlas, distant bamboo curtains, moon shafts, mist, spirit house and offerings, stone + paper lanterns, the stream, the shishi-odoshi, falling leaves, fireflies) is generated in code.

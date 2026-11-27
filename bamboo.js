@@ -1,15 +1,18 @@
 // BAMBOO FOREST — the court in a clearing inside a towering, swaying bamboo grove. A stone path leads off into the grove past each
 // end (lined with stone lanterns), a little spirit-house shrine with garlands sits by the court, leaf litter everywhere.
 // DAY: shafts of sunlight with dust drifting in them. NIGHT: paper lanterns hung from the stalks, cool moonbeams, fireflies.
+// ULTRA (bamboo-ultra.js) replaces the grove, floor, path, shrine and lanterns (`lite`) with a detailed moonlit grove.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rnd, floodPoles, bambooFence, paint, vcMat } from './props.js';
 import { makeFireflies, makeEmbers } from './life.js';
+import { buildBambooUltra } from './bamboo-ultra.js';
 
 export function buildBamboo(ctx) {
   const { F, xf, makeBatch, glowTexture } = ctx;
   const g = new THREE.Group(); g.name = 'bamboo';
   const fx = new THREE.Group(); g.add(fx);
+  const lite = new THREE.Group(); lite.name = 'bamboo-lite'; g.add(lite);   // everything the Ultra grove replaces
   const R = rnd(7373);
   const uTime = { value: 0 };
   const decor = makeBatch(), solid = makeBatch();
@@ -41,7 +44,7 @@ export function buildBamboo(ctx) {
     geo.computeVertexNormals();
     const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true }));
     m.receiveShadow = true;
-    g.add(m);
+    lite.add(m);
     for (const sx of [-1, 1]) for (let x = F.outX + 1.5; x < 140; x += 1.1) {
       put(MAT.vc, paint(new THREE.CylinderGeometry(0.42 + R() * 0.2, 0.48, 0.12, 7), [0x8a857a, 0x9a948a, 0x7a766c][Math.floor(R() * 3)]), sx * x, -0.08, (R() - 0.5) * 1.4, R() * 3);
     }
@@ -113,7 +116,7 @@ export function buildBamboo(ctx) {
       il.setColorAt(i, c.set(0xffffff).offsetHSL(0, 0, -(R() * 0.18)));
     });
     im.computeBoundingSphere(); il.computeBoundingSphere();
-    g.add(im, il);
+    lite.add(im, il);
   }
 
   /* ---------------- ground cover: ferns, rocks, fallen culms, new shoots ---------------- */
@@ -135,7 +138,7 @@ export function buildBamboo(ctx) {
     const o = new THREE.Object3D();
     spots.forEach(([x, z], i) => { o.position.set(x, -0.12, z); o.rotation.set(0, R() * 6, 0); o.scale.setScalar(0.7 + R() * 0.9); o.updateMatrix(); ferns.setMatrixAt(i, o.matrix); });
     ferns.computeBoundingSphere();
-    g.add(ferns);
+    lite.add(ferns);
     for (let i = 0; i < 70; i++) {
       const x = (R() - 0.5) * 110, z = (R() - 0.5) * 90;
       if (clearing(x, z, 0.5) || onPath(x, z)) continue;
@@ -144,7 +147,7 @@ export function buildBamboo(ctx) {
       else if (kind < 0.7) { const c = new THREE.CylinderGeometry(0.08, 0.09, 4 + R() * 5, 6); c.rotateZ(Math.PI / 2); c.rotateY(R() * 6); c.translate(x, 0.0, z); parts.push(paint(c, 0xb8a860)); }   // fallen culm
       else { for (let k = 0; k < 3; k++) { const s = new THREE.ConeGeometry(0.07, 0.6 + R() * 0.6, 5); s.translate(x + (R() - 0.5) * 0.6, 0.25, z + (R() - 0.5) * 0.6); parts.push(paint(s, 0x6a8a3a)); } }   // new shoots
     }
-    if (parts.length) g.add(new THREE.Mesh(mergeGeometries(parts), MAT.vc));
+    if (parts.length) lite.add(new THREE.Mesh(mergeGeometries(parts), MAT.vc));
   }
 
   /* ---------------- shrine + stone lanterns along the path ---------------- */
@@ -186,7 +189,8 @@ export function buildBamboo(ctx) {
     dayLife.add(makeFireflies(pts, uTime, [0.55, 0.5, 0.4]));                  // drifting dust in the light (dim, warm)
   }
   /* ---------------- NIGHT: paper lanterns hung in the grove, moonbeams, fireflies ---------------- */
-  const nightLife = new THREE.Group(); fx.add(nightLife);
+  const fxLite = new THREE.Group(); fx.add(fxLite);
+  const nightLife = new THREE.Group(); fxLite.add(nightLife);
   {
     const lg = new THREE.SphereGeometry(0.28, 10, 8); lg.scale(1, 1.3, 1);
     const pick = culms.filter(([x, z]) => Math.abs(x) < 40 && Math.abs(z) < 30).slice(0, 46);
@@ -204,11 +208,22 @@ export function buildBamboo(ctx) {
     nightLife.add(makeEmbers([[-(F.outX - 3), 1.7, -(F.outZ + 2.2)]], uTime, 8, [1, 0.8, 0.6]));   // incense at the shrine
   }
 
-  decor.build(g);
+  decor.build(lite);
   solid.build(g, { castShadow: true, receiveShadow: true });
 
-  let time = 0;
-  function update(dt) { time += dt; uTime.value = time; }
+  let time = 0, ultra = null;
+  function update(dt) { time += dt; uTime.value = time; if (ultra && ultra.group.visible) ultra.update(dt, time); }
   function setTime(tod) { const night = tod !== 'day'; dayLife.visible = !night; nightLife.visible = night; }
-  return { g, fx, update, setTime, fog: { day: [24, 130], night: [18, 105] } };
+  // ULTRA (bamboo-ultra.js): a dense, detailed moonlit grove — swaying culms with nodes and leaf sprays, misty depth, moon
+  // shafts, stone + paper lanterns along two side paths, a detailed spirit house with offerings, a stream and a water basin
+  const FOG = { day: [24, 130], night: [18, 105] };
+  const out = { g, fx, update, setTime, lite, fog: FOG };
+  out.buildUltra = () => { ultra = buildBambooUltra(ctx, uTime); return ultra.group; };
+  out.onUltra = (on) => {
+    fxLite.visible = !on;
+    out.fog = on && ultra ? ultra.fog : FOG;
+    out.look = on && ultra ? ultra.look : undefined;
+    if (ctx.applyFog) ctx.applyFog();
+  };
+  return out;
 }
