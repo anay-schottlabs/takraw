@@ -20,6 +20,7 @@ import { buildBeach } from './beach.js';
 import { buildJungle } from './jungle.js';
 import { buildBamboo } from './bamboo.js';
 import { buildFestival } from './festival.js';
+import { buildParis } from './paris.js';
 import { buildPalace } from './palace.js';
 import { buildMonastery } from './monastery.js';
 import { buildCruise } from './cruise.js';
@@ -638,6 +639,7 @@ let venue = 'temple';                 // map id on screen
 const venues = {};                    // `${id}:${size}` → { g, fx, update, setTime? }
 const VENUE_BUILDERS = { temple: buildTempleLife, pond: buildPond, terrace: buildTerrace, riverside: buildRiverside, rooftop: buildRooftop, market: buildMarket, beach: buildBeach, jungle: buildJungle, bamboo: buildBamboo, festival: buildFestival, palace: buildPalace, monastery: buildMonastery, cruise: buildCruise };   // (the temple's buildings live in main.js; this adds its life)
 const venueKey = (id) => `${id}:${courtSize}`;
+VENUE_BUILDERS.paris = buildParis;
 function setVenue(id) {
   if (!VENUE_BUILDERS[id]) id = 'temple';
   venue = id;
