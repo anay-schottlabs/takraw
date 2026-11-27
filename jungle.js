@@ -5,15 +5,23 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rnd, makeWater, floodPoles, bambooFence, paint, vcMat, treeClumps } from './props.js';
 import { makeFireflies, makeFlyers, makeFlock } from './life.js';
+import { buildJungleUltra } from './jungle-ultra.js';
 
 export function buildJungle(ctx) {
   const { F, xf, makeBatch, texLoader, glowTexture } = ctx;
   const g = new THREE.Group(); g.name = 'jungle';
   const fx = new THREE.Group(); g.add(fx);
+  // pieces Ultra rebuilds (jungle-ultra.js) — the floor, the cliff + falls + pool, the trees, vines and understory, the
+  // boulders, and (in fx) the spray, fireflies and mushrooms — go in `lite` / `liteFx`, which are hidden while Ultra is on
+  const lite = new THREE.Group(); lite.name = 'jungle-lite'; g.add(lite);
+  const liteFx = new THREE.Group(); fx.add(liteFx);
+  const FF = { ...F };                      // this court size (F itself changes with the size; Ultra is built lazily)
   const R = rnd(6262);
   const uTime = { value: 0 };
   const decor = makeBatch(), solid = makeBatch();
   const put = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => decor.put(mat, xf(geo, x, y, z, ry, rx, rz));
+  const liteB = makeBatch();
+  const putL = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => liteB.put(mat, xf(geo, x, y, z, ry, rx, rz));
   const putS = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => solid.put(mat, xf(geo, x, y, z, ry, rx, rz));
   const MAT = {
     bark: new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 0.95, flatShading: true }),
@@ -42,7 +50,7 @@ export function buildJungle(ctx) {
     geo.computeVertexNormals();
     const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true }));
     m.receiveShadow = true;
-    g.add(m);
+    lite.add(m);
   }
 
   /* ---------------- the cliff + waterfall + pool ---------------- */
@@ -65,11 +73,11 @@ export function buildJungle(ctx) {
       for (let k = 0; k < 3; k++) cc.set([c.r, c.g, c.b], (t + k) * 3);
     }
     ng.setAttribute('color', new THREE.BufferAttribute(cc, 3)); ng.deleteAttribute('uv');
-    g.add(new THREE.Mesh(ng, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true, side: THREE.DoubleSide })));
+    lite.add(new THREE.Mesh(ng, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true, side: THREE.DoubleSide })));
     // pool
     const pool = makeWater(texLoader, uTime, { w: 64, d: CLIFF_Z - POOL_Z + 6, color: 0x2a5a52, opacity: 0.9, repeat: [7, 3] });
     pool.position.set(0, -0.6, (POOL_Z + CLIFF_Z) / 2 + 1);
-    g.add(pool);
+    lite.add(pool);
     // falling water: stacked planes with a scrolling streak texture (two tiers), + white spray at each landing
     const tex = (() => {
       const cv = document.createElement('canvas'); cv.width = 64; cv.height = 256;
@@ -83,7 +91,7 @@ export function buildJungle(ctx) {
         const t = tex.clone(); t.repeat.set(w / 3, (top - bottom) / 10); t.needsUpdate = true;
         const m = new THREE.Mesh(new THREE.PlaneGeometry(w, top - bottom), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, opacity: k ? 0.6 : 0.85, side: THREE.DoubleSide }));
         m.position.set(x + k * 0.3, (top + bottom) / 2, z - k * 0.15); m.renderOrder = 4;
-        g.add(m);
+        lite.add(m);
         falls.push({ t, speed: k ? 1.1 : 1.6, m: m.material });
       }
     }
@@ -93,7 +101,7 @@ export function buildJungle(ctx) {
   {
     const mat = new THREE.SpriteMaterial({ map: glowTexture(), color: 0xeaf6ff, transparent: true, opacity: 0, depthWrite: false });
     for (let i = 0; i < 22; i++) {
-      const s = new THREE.Sprite(mat.clone()); fx.add(s);
+      const s = new THREE.Sprite(mat.clone()); liteFx.add(s);
       const lower = i % 2 === 0;
       const side = i % 4 < 2 ? 1 : -1;
       spray.push({ s, src: lower ? [side * 16.6 + (R() - 0.5) * 6, -0.5, CLIFF_Z - 3.6] : [side * 14 + (R() - 0.5) * 4, 10.4, CLIFF_Z - 2], t: R() });
@@ -118,9 +126,9 @@ export function buildJungle(ctx) {
       for (let k = 0; k < 4; k++) { const c = new THREE.IcosahedronGeometry(3 + R() * 2.5, 0); c.scale(1.4, 0.55, 1.4); c.translate(x + (R() - 0.5) * 5, h - 0.5 + R() * 2, z + (R() - 0.5) * 5); canopy.push(c); }
     }
     for (const arr of [trunk, roots]) for (const a of arr) a.deleteAttribute('uv');
-    g.add(new THREE.Mesh(mergeGeometries([...trunk, ...roots]), MAT.bark));
+    lite.add(new THREE.Mesh(mergeGeometries([...trunk, ...roots]), MAT.bark));
     const can = new THREE.Mesh(mergeGeometries(canopy), new THREE.MeshStandardMaterial({ color: 0x2f5a26, roughness: 0.85, flatShading: true }));
-    g.add(can);
+    lite.add(can);
     // hanging vines (thin swaying strands from the canopy)
     const vines = [];
     trees.slice(0, 30).forEach(([x, z, h]) => { for (let k = 0; k < 3; k++) { const l = 4 + R() * 7; const v = new THREE.CylinderGeometry(0.03, 0.03, l, 3); v.translate(0, -l / 2, 0); v.translate(x + (R() - 0.5) * 6, h - 0.6, z + (R() - 0.5) * 6); vines.push(v.toNonIndexed()); } });
@@ -131,7 +139,7 @@ export function buildJungle(ctx) {
       sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
         transformed.x += sin(uTime * 0.8 + position.x * 0.3 + position.z * 0.2) * 0.04 * (20.0 - position.y);`);
     };
-    g.add(new THREE.Mesh(mergeGeometries(vines), vm));
+    lite.add(new THREE.Mesh(mergeGeometries(vines), vm));
     // understory: lower tree clumps, ferns, elephant ears
     const clumps = [];
     for (let i = 0; i < 60; i++) {
@@ -140,7 +148,7 @@ export function buildJungle(ctx) {
       if (Math.abs(z) < 9 && Math.abs(x) < F.outX + 9) continue;
       clumps.push([x, -0.12, z, 0.9 + R() * 0.9, R() * 6]);
     }
-    g.add(treeClumps(clumps, { leaf: 0x355f2a, scaleY: 0.8 }));
+    lite.add(treeClumps(clumps, { leaf: 0x355f2a, scaleY: 0.8 }));
     const fern = [];
     for (let k = 0; k < 9; k++) { const f = new THREE.PlaneGeometry(0.35, 1.6, 1, 4); const pa = f.attributes.position; for (let j = 0; j < pa.count; j++) { const y = pa.getY(j) + 0.8; pa.setXYZ(j, pa.getX(j) * (1 - y / 1.9), -0.25 * y * y + 0.6 * y, y); } f.rotateY((k / 9) * Math.PI * 2); fern.push(f.toNonIndexed()); }
     const ear = [];
@@ -155,16 +163,16 @@ export function buildJungle(ctx) {
         o.position.set(x, -0.12, z); o.rotation.set(0, R() * 6, 0); o.scale.setScalar(0.8 + R() * 0.8); o.updateMatrix(); im.setMatrixAt(i, o.matrix);
       }
       im.computeBoundingSphere();
-      g.add(im);
+      lite.add(im);
     };
     place(mergeGeometries(fern), 0x4f8a32, 140, [1.0, 1.4]);
     place(mergeGeometries(ear), 0x3f7a2a, 50, [1.05, 1.0]);
     // mossy boulders around the pool
     for (let i = 0; i < 26; i++) {
       const a = (i / 26) * Math.PI, x = Math.cos(a) * 30, z = POOL_Z - 0.5 + Math.sin(a) * 2 + (i % 3) * 0.6;
-      put(MAT.vc, paint(new THREE.IcosahedronGeometry(0.6 + R() * 0.9, 0), R() < 0.5 ? 0x6a6458 : 0x4a6a32), x, -0.2, z, R() * 6, R(), R());
+      putL(MAT.vc, paint(new THREE.IcosahedronGeometry(0.6 + R() * 0.9, 0), R() < 0.5 ? 0x6a6458 : 0x4a6a32), x, -0.2, z, R() * 6, R(), R());
     }
-    for (let i = 0; i < 18; i++) put(MAT.vc, paint(new THREE.IcosahedronGeometry(0.5 + R() * 1.1, 0), 0x6a6458), (R() - 0.5) * 54, -0.5, POOL_Z + 1 + R() * 9, R() * 6, R(), R());
+    for (let i = 0; i < 18; i++) putL(MAT.vc, paint(new THREE.IcosahedronGeometry(0.5 + R() * 1.1, 0), 0x6a6458), (R() - 0.5) * 54, -0.5, POOL_Z + 1 + R() * 9, R() * 6, R(), R());
   }
 
   /* ---------------- fence, floodlights, lanterns ---------------- */
@@ -189,7 +197,7 @@ export function buildJungle(ctx) {
     for (const [x, z] of [[-18, -14], [16, -16], [26, 10], [-28, 8], [4, -20]]) { const m = new THREE.Mesh(shaft, sm); m.position.set(x, 10, z); m.rotation.z = 0.25; m.rotation.x = -0.15; dayLife.add(m); }
   }
   /* ---------------- night: fireflies, glowing mushrooms ---------------- */
-  const nightLife = new THREE.Group(); fx.add(nightLife);
+  const nightLife = new THREE.Group(); liteFx.add(nightLife);
   {
     const pts = [];
     for (let i = 0; i < 220; i++) {
@@ -211,14 +219,16 @@ export function buildJungle(ctx) {
   }
 
   decor.build(g);
+  liteB.build(lite);
   solid.build(g, { castShadow: true, receiveShadow: true });
 
-  let time = 0;
+  let time = 0, ultra = null;
   function update(dt) {
     time += dt;
     uTime.value = time;
     for (const f of falls) f.t.offset.y = (f.t.offset.y + dt * f.speed) % 1;
-    if (!fx.visible) return;
+    if (ultra && ultra.group.visible) ultra.update(dt, time);
+    if (!fx.visible || !liteFx.visible) return;
     for (const sp of spray) {
       sp.t += dt / 1.8; if (sp.t > 1) sp.t -= 1;
       sp.s.position.set(sp.src[0] + Math.sin(sp.t * 4 + sp.src[0]) * 0.6, sp.src[1] + sp.t * 2.4, sp.src[2] - sp.t * 1.5);
@@ -237,5 +247,17 @@ export function buildJungle(ctx) {
     dayLife.visible = !night; nightLife.visible = night;
     for (const f of falls) f.m.color.setScalar(night ? 0.45 : 1);       // moonlit water, not glowing water
   }
-  return { g, fx, update, setTime, fog: { day: [40, 220], night: [26, 140] } };
+  // ULTRA (jungle-ultra.js): a smooth leaf-litter floor, a stratified mossy gorge wall with a three-tier waterfall into a
+  // mirror-still plunge pool, layered rainforest (buttressed giants, palms, bananas, tree ferns, lianas, hanging vines),
+  // a stream, glowing fungi, fireflies, moonbeams, bats + hornbills, ridges in mist. Shown only while Ultra is on.
+  const FOG = { day: [40, 220], night: [26, 140] };
+  const out = { g, fx, update, setTime, lite, fog: FOG };
+  out.buildUltra = () => { ultra = buildJungleUltra({ ...ctx, F: FF, POOL_Z, CLIFF_Z }, uTime); return ultra.group; };
+  out.onUltra = (on) => {
+    liteFx.visible = !on;
+    out.fog = on && ultra ? ultra.fog : FOG;
+    out.look = on && ultra ? ultra.look : undefined;
+    if (ctx.applyFog) ctx.applyFog();
+  };
+  return out;
 }

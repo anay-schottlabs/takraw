@@ -10,7 +10,7 @@ export const MAPS = [
   { id: 'paris', name: 'Paris Night', blurb: 'A court by the Seine — the Eiffel Tower, cafés, bateaux-mouches', swatch: ['#1c2a44', '#f2b84a'], ui: { a: '#f2b84a', b: '#8fb8ff', tint: '#10162a' } },
   { id: 'market', ultra: true, name: 'Night Market Alley', blurb: 'A market street — stalls, grills, neon signs and tuk-tuks', swatch: ['#3a1a2a', '#ff3fa0'], ui: { a: '#ff4fa8', b: '#ffc23a', tint: '#260e1c' } },
   { id: 'beach', ultra: true, name: 'Karst Beach', blurb: 'A sand court on an Andaman beach — karst towers, long-tails, fire dancers at night', swatch: ['#1f7f8f', '#ead6a2'], ui: { a: '#3fd0d8', b: '#f2d38a', tint: '#0a1f26' } },
-  { id: 'jungle', name: 'Jungle Waterfall', blurb: 'A rainforest clearing by a tiered waterfall — hornbills, vines, fireflies', swatch: ['#2f5a26', '#bfe8f0'], ui: { a: '#7fe08a', b: '#bfeaf2', tint: '#0c1e0e' } },
+  { id: 'jungle', ultra: true, name: 'Jungle Waterfall', blurb: 'A rainforest clearing by a tiered waterfall — hornbills, vines, fireflies', swatch: ['#2f5a26', '#bfe8f0'], ui: { a: '#7fe08a', b: '#bfeaf2', tint: '#0c1e0e' } },
   { id: 'bamboo', name: 'Bamboo Forest', blurb: 'A clearing in a towering bamboo grove — light shafts, lanterns, a shrine', swatch: ['#8fa83f', '#ffd27a'], ui: { a: '#c2dc5a', b: '#ffd27a', tint: '#141c0a' } },
   { id: 'festival', ultra: true, name: 'Lantern Festival', blurb: 'Yi Peng night — sky lanterns rising, khom lantern canopies, drums', swatch: ['#2a1a3a', '#ffa04a'], ui: { a: '#ffa04a', b: '#ffd86a', tint: '#20112a' } },
   { id: 'palace', ultra: true, name: 'Palace Garden', blurb: 'Gilded pavilions, reflecting pools, topiary and guardian giants', swatch: ['#1f4a6a', '#e8b85a'], ui: { a: '#f0c060', b: '#6fb8f0', tint: '#0c1a28' } },
