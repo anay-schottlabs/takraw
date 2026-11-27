@@ -5,9 +5,12 @@
 // fireflies hang over the reeds and far-off chedis catch the last light.
 // Same visual language as the courtyard: low-poly + flat-shaded, merged geometry, glazed orange/green roofs,
 // red lacquer, gold trim, warm unlit "glow" lamps that bloom picks up.
+// ULTRA (pond-ultra.js) swaps the pieces in `lite` (water, lotus, bridges, salas, chedis, willows, frangipani, the fake
+// lamp streaks on the water, the candle boats + mist) for a mirror-dark pond in full bloom; High is left exactly as it was.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeFlyers } from './life.js';
+import { buildPondUltra } from './pond-ultra.js';
 
 const WATER_Y = -0.5;            // pond surface (the deck top is y = 0)
 const FLOOR_Y = -1.55;           // pond bed
@@ -67,6 +70,9 @@ export function buildPond(ctx) {
   };
   const decor = makeBatch();          // static, no shadows
   const solid = makeBatch();          // near the court: casts + receives shadows
+  const lite = new THREE.Group(); lite.name = 'pond-lite'; g.add(lite);   // what Ultra replaces (hidden on Ultra)
+  const liteDecor = makeBatch();
+  const fxLite = new THREE.Group(); fx.add(fxLite);                       // candle boats + mist (Ultra has its own)
 
   /* ---------------- water, pond bed, banks ---------------- */
   {
@@ -95,7 +101,7 @@ export function buildPond(ctx) {
     const wm = new THREE.Mesh(new THREE.PlaneGeometry(A * 2 + 6, B * 2 + 6), water);
     wm.rotation.x = -Math.PI / 2; wm.position.y = WATER_Y;
     wm.renderOrder = 2;
-    g.add(wm);
+    lite.add(wm);
 
     // grassy banks all around: one big ground sheet with the pond cut out of it
     const N = 180, ring = [];
@@ -227,17 +233,17 @@ export function buildPond(ctx) {
     for (let i = 0; i < n; i++) {
       const ta = i / n, tb = (i + 1) / n, xa = x0 + (x1 - x0) * ta, xb = x0 + (x1 - x0) * tb;
       const ya = yAt(ta), yb = yAt(tb), len = Math.hypot(xb - xa, yb - ya), ang = Math.atan2(yb - ya, xb - xa);
-      decor.put(MAT.teak, xf(new THREE.BoxGeometry(len + 0.02, 0.12, W), (xa + xb) / 2, (ya + yb) / 2 - 0.06, 0, 0, 0, ang));
-      for (const sz of [-1, 1]) decor.put(MAT.red, xf(new THREE.BoxGeometry(len + 0.02, 0.07, 0.08), (xa + xb) / 2, (ya + yb) / 2 + 0.85, sz * (W / 2 - 0.05), 0, 0, ang));
+      liteDecor.put(MAT.teak, xf(new THREE.BoxGeometry(len + 0.02, 0.12, W), (xa + xb) / 2, (ya + yb) / 2 - 0.06, 0, 0, 0, ang));
+      for (const sz of [-1, 1]) liteDecor.put(MAT.red, xf(new THREE.BoxGeometry(len + 0.02, 0.07, 0.08), (xa + xb) / 2, (ya + yb) / 2 + 0.85, sz * (W / 2 - 0.05), 0, 0, ang));
       if (i % 3 === 0) for (const sz of [-1, 1]) {
-        decor.put(MAT.red, xf(new THREE.BoxGeometry(0.11, 0.95, 0.11), xa, ya + 0.42, sz * (W / 2 - 0.05)));
-        decor.put(MAT.gold, xf(new THREE.ConeGeometry(0.08, 0.18, 4), xa, ya + 0.98, sz * (W / 2 - 0.05), Math.PI / 4));
+        liteDecor.put(MAT.red, xf(new THREE.BoxGeometry(0.11, 0.95, 0.11), xa, ya + 0.42, sz * (W / 2 - 0.05)));
+        liteDecor.put(MAT.gold, xf(new THREE.ConeGeometry(0.08, 0.18, 4), xa, ya + 0.98, sz * (W / 2 - 0.05), Math.PI / 4));
       }
     }
     // piers under the arch
     for (const t of [0.22, 0.5, 0.78]) for (const sz of [-1, 1]) {
       const x = x0 + (x1 - x0) * t;
-      decor.put(MAT.darkwood, xf(new THREE.CylinderGeometry(0.1, 0.12, yAt(t) - FLOOR_Y, 6), x, (yAt(t) + FLOOR_Y) / 2, sz * 0.9));
+      liteDecor.put(MAT.darkwood, xf(new THREE.CylinderGeometry(0.1, 0.12, yAt(t) - FLOOR_Y, 6), x, (yAt(t) + FLOOR_Y) / 2, sz * 0.9));
     }
   }
 
@@ -295,7 +301,7 @@ export function buildPond(ctx) {
     }
     for (const sx of [-1, 1]) {
       const M = new THREE.Matrix4().makeRotationY(sx > 0 ? 0 : Math.PI).setPosition(sx * SALA_X, 0, 0);
-      for (const [mat, geo] of sala) decor.put(mat, geo.clone().applyMatrix4(M));
+      for (const [mat, geo] of sala) liteDecor.put(mat, geo.clone().applyMatrix4(M));
     }
     for (const [, geo] of sala) geo.dispose();
   }
@@ -308,8 +314,8 @@ export function buildPond(ctx) {
     [0.34, 8.0], [0.36, 8.2], [0.26, 8.7], [0.28, 8.9], [0.17, 9.6], [0.12, 10.6], [0.06, 11.6], [0.02, 12.3], [0, 12.5]]), 12);
   const chedi = (x, y, z, s, gilded = false) => {
     const b = chediBody.clone().scale(s, s, s), sp = chediSpire.clone().scale(s, s, s);
-    decor.put(gilded ? MAT.gold : MAT.plaster, xf(b, x, y, z));
-    decor.put(MAT.gold, xf(sp, x, y, z));
+    liteDecor.put(gilded ? MAT.gold : MAT.plaster, xf(b, x, y, z));
+    liteDecor.put(MAT.gold, xf(sp, x, y, z));
   };
   for (const sx of [-1, 1]) {
     chedi(sx * 60, BANK_Y, 0, 1.7);                   // the big white-and-gold one across the water, framed by the sala
@@ -362,7 +368,7 @@ export function buildPond(ctx) {
       return im;
     };
     g.add(mk(pools, new THREE.Color(0xffa64d), 0.55));
-    g.add(mk(reflections, new THREE.Color(0xffb35c), 0.42));
+    lite.add(mk(reflections, new THREE.Color(0xffb35c), 0.42));
   }
 
   /* ---------------- lotus: pads, flowers, buds ---------------- */
@@ -404,7 +410,7 @@ export function buildPond(ctx) {
     });
     pads.computeBoundingSphere();
     pads.receiveShadow = true;
-    g.add(pads);
+    lite.add(pads);
 
     // flowers: two rings of petals + a golden heart, on stems; pink, white and deep pink
     const petals = [];
@@ -442,7 +448,7 @@ export function buildPond(ctx) {
       bd.setMatrixAt(i, o.matrix); bd.setColorAt(i, c.set(pinks[(i + 2) % pinks.length]));
       o.rotation.set(0, 0, 0); o.scale.set(1, h, 1); o.updateMatrix(); stems.setMatrixAt(flowers.length + i, o.matrix);
     });
-    for (const m of [fl, hearts, stems, bd]) { m.computeBoundingSphere(); g.add(m); }
+    for (const m of [fl, hearts, stems, bd]) { m.computeBoundingSphere(); lite.add(m); }
   }
 
   /* ---------------- koi ---------------- */
@@ -530,7 +536,7 @@ export function buildPond(ctx) {
       const r = new THREE.Mesh(reflGeo, refl); r.position.y = 0.005 - 0.02; r.renderOrder = 3; cg.add(r);
       cg.scale.setScalar(1.25);
       candles.push({ g: cg, a: 16.6 + R() * 8, b: 9.8 + R() * 3.4, th: R() * Math.PI * 2, dir: R() < 0.5 ? -1 : 1, speed: 0.12 + R() * 0.1, wob: R() * 6, flame: f, halo: h });
-      fx.add(cg);
+      fxLite.add(cg);
     }
   }
 
@@ -604,18 +610,19 @@ export function buildPond(ctx) {
     g.add(ct);
   }
 
+  const frangiSpots = [], willowSpots = [];         // (handed to Ultra, which grows detailed trees in the same places)
   /* ---------------- trees: frangipani (like the courtyard's), weeping willows over the water, palms, bamboo, a far tree belt ---------------- */
   {
     const V = (x, y, z) => new THREE.Vector3(x, y, z);
     const bark = new THREE.MeshStandardMaterial({ color: 0x5a4a3c, roughness: 0.9 });
     const leafMat = new THREE.MeshStandardMaterial({ color: 0x2e5a2c, roughness: 0.8, flatShading: true });
-    const place = (geo, mat, spots, shadow = false) => {
+    const place = (geo, mat, spots, shadow = false, parent = g) => {
       const im = new THREE.InstancedMesh(geo, mat, spots.length);
       const o = new THREE.Object3D();
       spots.forEach(([x, z, s, r, y = BANK_Y], i) => { o.position.set(x, y, z); o.rotation.set(0, r, 0); o.scale.setScalar(s); o.updateMatrix(); im.setMatrixAt(i, o.matrix); });
       im.computeBoundingSphere();
       im.castShadow = shadow;
-      g.add(im);
+      parent.add(im);
     };
     const limbs = (list, a, b, r0, r1) => {
       const d = b.clone().sub(a), c = new THREE.CylinderGeometry(r1, r0, d.length(), 6);
@@ -646,9 +653,10 @@ export function buildPond(ctx) {
       }
       const spots = [[24, 26, 1.0, 0.3], [-24, -26, 1.05, 2.0], [36, 9.5, 0.95, 1.1], [-36, -9.5, 1.0, 2.6], [36, -9.5, 1.1, 0.4], [-36, 9.5, 0.9, 3.0],
         [ISLANDS[0][0] - 1.4, ISLANDS[0][1] + 0.6, 0.7, 0.2], [ISLANDS[1][0] + 1.4, ISLANDS[1][1] - 0.6, 0.7, 1.4]];
-      place(mergeGeometries(br), bark, spots);
-      place(mergeGeometries(leaf), leafMat, spots);
-      place(mergeGeometries(blossom), new THREE.MeshStandardMaterial({ color: 0xfff1da, emissive: 0x5a4632, roughness: 0.6 }), spots);
+      place(mergeGeometries(br), bark, spots, false, lite);
+      place(mergeGeometries(leaf), leafMat, spots, false, lite);
+      place(mergeGeometries(blossom), new THREE.MeshStandardMaterial({ color: 0xfff1da, emissive: 0x5a4632, roughness: 0.6 }), spots, false, lite);
+      frangiSpots.push(...spots);
     }
     // weeping willows leaning out over the water
     {
@@ -670,8 +678,9 @@ export function buildPond(ctx) {
         if (Math.abs(z) < 7 && Math.abs(x) > 26) continue;
         spots.push([x + (x / d) * 1.6, z + (z / d) * 1.6, 0.9 + (t % 0.4), Math.atan2(-x, -z) - Math.PI / 2]);   // lean toward the water
       }
-      place(mergeGeometries(tr), bark, spots);
-      place(mergeGeometries(cr), new THREE.MeshStandardMaterial({ color: 0x6f8f3a, roughness: 0.85, flatShading: true }), spots);
+      place(mergeGeometries(tr), bark, spots, false, lite);
+      place(mergeGeometries(cr), new THREE.MeshStandardMaterial({ color: 0x6f8f3a, roughness: 0.85, flatShading: true }), spots, false, lite);
+      willowSpots.push(...spots);
     }
     // coconut palms
     {
@@ -784,7 +793,7 @@ export function buildPond(ctx) {
       m.scale.set(12 + (i % 4) * 3, 1, 6 + (i % 3) * 2);
       m.position.set(x * 0.86, WATER_Y + 0.25 + (i % 3) * 0.1, z * 0.86);
       m.renderOrder = 4;
-      fx.add(m);
+      fxLite.add(m);
       mist.push({ m, x: m.position.x, z: m.position.z, ph: i * 1.7 });
     }
   }
@@ -818,13 +827,15 @@ export function buildPond(ctx) {
 
   decor.build(g);
   solid.build(g, { castShadow: true, receiveShadow: true });
+  liteDecor.build(lite);
 
   /* ---------------- per-frame life ---------------- */
   const o = new THREE.Object3D();
-  let time = 0;
+  let time = 0, ultra = null;
   function update(dt, pixelRatio = 1) {
     time += dt;
     uTime.value = time;
+    if (ultra && ultra.group.visible) ultra.update(dt, time, pixelRatio);
     // koi
     for (let i = 0; i < koi.length; i++) {
       const k = koi[i];
@@ -848,7 +859,7 @@ export function buildPond(ctx) {
     }
     if (!fx.visible) return;
     // candle boats drift on slow loops; flames flicker
-    for (const cd of candles) {
+    if (fxLite.visible) for (const cd of candles) {
       cd.th += (cd.dir * cd.speed * dt) / ((cd.a + cd.b) / 2);
       const c = Math.cos(cd.th), s = Math.sin(cd.th), w = 1 + 0.05 * Math.sin(cd.th * 2 + cd.wob);
       cd.g.position.set(cd.a * w * Math.sign(c) * Math.pow(Math.abs(c), 0.5), WATER_Y + 0.005 + Math.sin(time * 1.3 + cd.wob) * 0.012, cd.b * w * Math.sign(s) * Math.pow(Math.abs(s), 0.5));
@@ -871,7 +882,7 @@ export function buildPond(ctx) {
       r.m.material.opacity = 0.32 * (1 - r.t);
       if (r.t >= 1) r.m.visible = false;
     }
-    for (const m of mist) {
+    if (fxLite.visible) for (const m of mist) {
       m.m.position.x = m.x + Math.sin(time * 0.05 + m.ph) * 2.2;
       m.m.position.z = m.z + Math.cos(time * 0.04 + m.ph) * 1.2;
     }
@@ -886,5 +897,18 @@ export function buildPond(ctx) {
     for (const m of mist) m.m.visible = night;
     dayLife.visible = !night;
   }
-  return { g, fx, update, setTime };
+  // ULTRA (pond-ultra.js): see the header there
+  const out = { g, fx, update, setTime, lite };
+  out.buildUltra = () => {
+    ultra = buildPondUltra({ ...ctx, WATER_Y, FLOOR_Y, BANK_Y, A, B, rim, pondR, rng, deckX, deckZ, SALA_X, SALA_Y, ISLANDS, poles, stoneLanterns,
+      frangiSpots, willowSpots, uTime, plankMap, plankNor, roofTex, roofNor, ornMat: MAT.orn, reflect: [g] });
+    return ultra.group;
+  };
+  out.onUltra = (on) => {
+    fxLite.visible = !on;
+    out.look = on && ultra ? ultra.look : undefined;
+    out.fog = on && ultra ? ultra.fog : undefined;
+    if (ctx.applyFog) ctx.applyFog();
+  };
+  return out;
 }

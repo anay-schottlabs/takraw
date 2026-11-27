@@ -6,12 +6,14 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rnd, floodPoles, bambooFence, paint, vcMat, treeClumps } from './props.js';
 import { personGeometry } from './life.js';
+import { buildFestivalUltra } from './festival-ultra.js';
 
 export function buildFestival(ctx) {
   const { F, xf, makeBatch, glowTexture } = ctx;
   const g = new THREE.Group(); g.name = 'festival';
   const fx = new THREE.Group(); g.add(fx);
   const R = rnd(8484);
+  const lite = new THREE.Group(); lite.name = 'festival-lite'; g.add(lite);   // everything the Ultra festival replaces
   const decor = makeBatch(), solid = makeBatch();
   const put = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => decor.put(mat, xf(geo, x, y, z, ry, rx, rz));
   const putS = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => solid.put(mat, xf(geo, x, y, z, ry, rx, rz));
@@ -37,10 +39,10 @@ export function buildFestival(ctx) {
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3)); geo.computeVertexNormals();
     const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true }));
-    m.receiveShadow = true; g.add(m);
+    m.receiveShadow = true; lite.add(m);
     const trees = [];
     for (let i = 0; i < 110; i++) { const a = R() * Math.PI * 2, r = 70 + R() * 40; trees.push([Math.cos(a) * r * 1.3, -0.1, Math.sin(a) * r, 1.4 + R() * 1.4, R() * 6]); }
-    g.add(treeClumps(trees, { leaf: 0x2f4a2a }));
+    lite.add(treeClumps(trees, { leaf: 0x2f4a2a }));
     // a temple chedi on the hill off each end, floodlit at night
     const V2 = (pts) => pts.map(([r, y]) => new THREE.Vector2(r, y));
     const body = new THREE.LatheGeometry(V2([[0, 0], [3, 0], [3, 0.7], [2.6, 0.7], [2.6, 1.4], [2.25, 1.4], [2.25, 2], [2.35, 2.3], [2.45, 3], [2.35, 3.9], [2, 4.7], [1.45, 5.35], [0.9, 5.75], [0.85, 6.1], [1, 6.1], [1, 6.6], [0.6, 6.6], [0.4, 8], [0.2, 10.6], [0, 12.5]]), 16);
@@ -71,7 +73,7 @@ export function buildFestival(ctx) {
         flags.push(paint(f, tentCols[(i + (x | 0)) % tentCols.length]));
       }
     }
-    g.add(new THREE.Mesh(mergeGeometries(flags), vcMat({ side: THREE.DoubleSide })));
+    lite.add(new THREE.Mesh(mergeGeometries(flags), vcMat({ side: THREE.DoubleSide })));
   }
   // stage with drums on the +z side, facing the court
   {
@@ -99,7 +101,7 @@ export function buildFestival(ctx) {
     for (const [a, b, n] of lines) {
       const pts = [];
       for (let i = 0; i <= n; i++) { const t = i / n, p = a.clone().lerp(b, t); p.y -= Math.sin(Math.PI * t) * 1.4; pts.push(p); if (i > 0 && i < n) hang.push(p); }
-      g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wire));
+      lite.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wire));
     }
     for (const sx of [-1, 1]) for (const s of [-1, 1]) for (let k = 0; k < 6; k++) put(MAT.bamboo, new THREE.CylinderGeometry(0.08, 0.1, 7.6, 6), sx * (F.outX + 7 + k * 3.2), 3.7, s * (SIDE - 2));
     // khom: a ribbed drum with a flared skirt and a tassel
@@ -111,7 +113,7 @@ export function buildFestival(ctx) {
     const o = new THREE.Object3D(), cols = [0xff5a2e, 0xffae42, 0xffd27a, 0xff7a5a, 0xfff0c8].map((c) => new THREE.Color(c));
     hang.forEach((p, i) => { o.position.set(p.x, p.y - 0.4, p.z); o.updateMatrix(); im.setMatrixAt(i, o.matrix); im.setColorAt(i, cols[i % cols.length]); });
     im.computeBoundingSphere();
-    g.add(im);
+    lite.add(im);
   }
 
   /* ---------------- the crowd (one merged mesh) ---------------- */
@@ -129,7 +131,7 @@ export function buildFestival(ctx) {
       }
       if (R() < 0.3) handLanterns.push([x + Math.sin(ry) * 0.3, 1.3, z + Math.cos(ry) * 0.3]);
     }
-    g.add(new THREE.Mesh(mergeGeometries(parts), MAT.vc));
+    lite.add(new THREE.Mesh(mergeGeometries(parts), MAT.vc));
   }
 
   /* ---------------- fence + floodlights ---------------- */
@@ -139,7 +141,7 @@ export function buildFestival(ctx) {
   /* ---------------- NIGHT: sky lanterns rising, lanterns in people's hands ---------------- */
   const night = new THREE.Group(); fx.add(night);
   const sky = [];
-  let skyMesh;
+  let skyMesh, hl;
   {
     const lg = new THREE.CylinderGeometry(0.42, 0.3, 0.9, 8);
     skyMesh = new THREE.InstancedMesh(lg, new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffa04a).multiplyScalar(2.4) }), 420);
@@ -153,7 +155,7 @@ export function buildFestival(ctx) {
       skyMesh.setColorAt(i, c.set(0xffa04a).offsetHSL((R() - 0.5) * 0.04, 0, (R() - 0.5) * 0.15));
     }
     night.add(skyMesh);
-    const hl = new THREE.InstancedMesh(new THREE.SphereGeometry(0.12, 6, 5), MAT.glow, handLanterns.length);
+    hl = new THREE.InstancedMesh(new THREE.SphereGeometry(0.12, 6, 5), MAT.glow, handLanterns.length);
     const o = new THREE.Object3D();
     handLanterns.forEach(([x, y, z], i) => { o.position.set(x, y, z); o.updateMatrix(); hl.setMatrixAt(i, o.matrix); });
     hl.computeBoundingSphere();
@@ -174,13 +176,16 @@ export function buildFestival(ctx) {
     }
   }
 
-  decor.build(g);
+  decor.build(lite);
   solid.build(g, { castShadow: true, receiveShadow: true });
 
   const o = new THREE.Object3D();
-  let time = 0;
+  let time = 0, ultra = null, ultraOn = false;
+  const uTime = { value: 0 };
   function update(dt) {
     time += dt;
+    uTime.value = time;
+    if (ultraOn && ultra) { if (fx.visible) ultra.update(dt, time); return; }   // the Ultra festival animates itself (on the GPU)
     if (night.visible && fx.visible) {
       for (let i = 0; i < sky.length; i++) {
         const s = sky[i];
@@ -198,5 +203,17 @@ export function buildFestival(ctx) {
     }
   }
   function setTime(tod) { const n = tod !== 'day'; night.visible = n; day.visible = !n; }
-  return { g, fx, update, setTime, fog: { day: [80, 400], night: [60, 320] } };
+  // ULTRA (see festival-ultra.js): the field, tents, bunting, stage, khom canopies and crowd (`lite`) give way to a full Yi Peng
+  // night; the High sky lanterns + hand lanterns are hidden (Ultra has its own); sky, haze and light come from `look`
+  const out = { g, fx, update, setTime, lite, fog: { day: [80, 400], night: [60, 320] } };
+  const fog0 = out.fog;
+  out.buildUltra = () => { ultra = buildFestivalUltra(ctx, uTime); return ultra.group; };
+  out.onUltra = (on) => {
+    ultraOn = on;
+    skyMesh.visible = hl.visible = !on;
+    out.fog = on && ultra ? ultra.fog : fog0;
+    out.look = on && ultra ? ultra.look : undefined;
+    if (ctx.applyFog) ctx.applyFog();
+  };
+  return out;
 }
