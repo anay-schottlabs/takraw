@@ -6,7 +6,7 @@ export const MAPS = [
   { id: 'temple', ultra: true, name: 'Temple Courtyard', blurb: 'Ordination halls, galleries, chedis and lantern festoons', swatch: ['#8a1e17', '#dba54c'], ui: { a: '#f0b04a', b: '#ff6a4a', tint: '#2a1410' } },
   { id: 'pond', ultra: true, name: 'Lotus Pond', blurb: 'A teak deck in a lotus pond — koi, bridges, salas', swatch: ['#1f5a5c', '#ff8fb8'], ui: { a: '#ff8fb8', b: '#5fd8c8', tint: '#0c2224' } },
   { id: 'riverside', ultra: true, name: 'Riverside Pier', blurb: 'A teak pier on a busy river — long-tail boats, shophouses, bridges', swatch: ['#2f4a3c', '#e2a400'], ui: { a: '#f2b83a', b: '#5fd0a0', tint: '#122218' } },
-  { id: 'rooftop', name: 'Bangkok Rooftop', blurb: 'A court on top of a tower — skyline, neon, a golden prang far off', swatch: ['#2a3a5a', '#3fe0ff'], ui: { a: '#3fe0ff', b: '#ff5fb8', tint: '#0c1428' } },
+  { id: 'rooftop', ultra: true, name: 'Bangkok Rooftop', blurb: 'A court on top of a tower — skyline, neon, a golden prang far off', swatch: ['#2a3a5a', '#3fe0ff'], ui: { a: '#3fe0ff', b: '#ff5fb8', tint: '#0c1428' } },
   { id: 'paris', name: 'Paris Night', blurb: 'A court by the Seine — the Eiffel Tower, cafés, bateaux-mouches', swatch: ['#1c2a44', '#f2b84a'], ui: { a: '#f2b84a', b: '#8fb8ff', tint: '#10162a' } },
   { id: 'market', ultra: true, name: 'Night Market Alley', blurb: 'A market street — stalls, grills, neon signs and tuk-tuks', swatch: ['#3a1a2a', '#ff3fa0'], ui: { a: '#ff4fa8', b: '#ffc23a', tint: '#260e1c' } },
   { id: 'beach', ultra: true, name: 'Karst Beach', blurb: 'A sand court on an Andaman beach — karst towers, long-tails, fire dancers at night', swatch: ['#1f7f8f', '#ead6a2'], ui: { a: '#3fd0d8', b: '#f2d38a', tint: '#0a1f26' } },

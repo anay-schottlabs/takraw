@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rnd, skyline, festoons, floodPoles, boundaryRail, neonSign, paint, vcMat } from './props.js';
+import { buildRooftopUltra } from './rooftop-ultra.js';
 
 const STREET_Y = -64;
 
@@ -12,6 +13,7 @@ export function buildRooftop(ctx) {
   const { F, xf, makeBatch, glowTexture } = ctx;
   const g = new THREE.Group(); g.name = 'rooftop';
   const fx = new THREE.Group(); g.add(fx);
+  const lite = new THREE.Group(); lite.name = 'rooftop-lite'; g.add(lite);   // everything the Ultra city + roof replace
   const R = rnd(9090);
   const decor = makeBatch(), solid = makeBatch();
   const put = (mat, geo, x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0) => decor.put(mat, xf(geo, x, y, z, ry, rx, rz));
@@ -29,7 +31,14 @@ export function buildRooftop(ctx) {
   const RX = F.outX + 5.5, RZ = F.outZ + 5.5;       // roof half-extents
 
   /* ---------------- the roof + the tower under it ---------------- */
-  putS(MAT.concrete, new THREE.BoxGeometry(RX * 2, 0.3, RZ * 2), 0, -0.27, 0);
+  // the slab is a frame round the court deck (main.js: ±(outX+0.4) × ±(outZ+0.4), 12 cm tall) + a lower piece under it:
+  // a slab top just under the court floor showed through it in a big triangle (depth precision at grazing angles)
+  {
+    const hx = F.outX + 0.4, hz = F.outZ + 0.4;
+    for (const sz of [-1, 1]) putS(MAT.concrete, new THREE.BoxGeometry(RX * 2, 0.3, RZ - hz), 0, -0.27, sz * (RZ + hz) / 2);
+    for (const sx of [-1, 1]) putS(MAT.concrete, new THREE.BoxGeometry(RX - hx, 0.3, hz * 2), sx * (RX + hx) / 2, -0.27, 0);
+    putS(MAT.concrete, new THREE.BoxGeometry(hx * 2, 0.3, hz * 2), 0, -0.62, 0);
+  }
   for (const [len, x, z, ry] of [[RX * 2 + 0.6, 0, -RZ - 0.15, 0], [RX * 2 + 0.6, 0, RZ + 0.15, 0], [RZ * 2, -RX - 0.15, 0, Math.PI / 2], [RZ * 2, RX + 0.15, 0, Math.PI / 2]]) {
     putS(MAT.parapet, new THREE.BoxGeometry(len, 1.1, 0.3), x, 0.43, z, ry);
     putS(MAT.steel, new THREE.BoxGeometry(len, 0.05, 0.34), x, 1.0, z, ry);
@@ -40,9 +49,10 @@ export function buildRooftop(ctx) {
     const uv = geo.attributes.uv, nrm = geo.attributes.normal;
     for (let k = 0; k < uv.count; k++) { const h = Math.abs(nrm.getX(k)) > 0.5 ? RZ * 2 : RX * 2; uv.setXY(k, uv.getX(k) * h / 8, uv.getY(k) * (-0.42 - STREET_Y) / 6.5); }
     geo.translate(0, (STREET_Y - 0.42) / 2, 0);
+    { const ix = Array.from(geo.index.array); ix.splice(12, 6); geo.setIndex(ix); geo.clearGroups(); }   // no top face: it sat 30 cm under the slab top and showed through it
     tower.mesh.geometry.dispose();
     tower.mesh.geometry = geo;
-    g.add(tower.mesh);
+    lite.add(tower.mesh);
   }
   // roof gear: water tanks on stands, AC units, vents, potted palms, a rooftop bar
   for (const [x, z] of [[RX - 2, RZ - 2], [-RX + 2, -RZ + 2]]) {
@@ -75,8 +85,8 @@ export function buildRooftop(ctx) {
     put(MAT.vc, paint(new THREE.BoxGeometry(5, 1.1, 0.8), 0x2a2a30), 0, 0.33, bz);
     put(MAT.vc, paint(new THREE.BoxGeometry(5.2, 0.08, 1.0), 0xc8a060), 0, 0.92, bz);
     for (let i = -2; i <= 2; i++) put(MAT.vc, paint(new THREE.CylinderGeometry(0.18, 0.12, 0.75, 8), 0x8a2a3a), i * 1.0, 0.15, bz + 0.9);
-    const n = neonSign('SKY BAR', '#3fe0ff', 3.4, 0.9); n.mesh.position.set(0, 2.3, -RZ + 0.05); g.add(n.mesh); neon.push(n.mat);
-    const n2 = neonSign('TAKRAW', '#ff3fa0', 3.0, 0.8); n2.mesh.position.set(-RX + 0.05, 2.0, -RZ / 2); n2.mesh.rotation.y = Math.PI / 2; g.add(n2.mesh); neon.push(n2.mat);
+    const n = neonSign('SKY BAR', '#3fe0ff', 3.4, 0.9); n.mesh.position.set(0, 2.3, -RZ + 0.05); lite.add(n.mesh); neon.push(n.mat);
+    const n2 = neonSign('TAKRAW', '#ff3fa0', 3.0, 0.8); n2.mesh.position.set(-RX + 0.05, 2.0, -RZ / 2); n2.mesh.rotation.y = Math.PI / 2; lite.add(n2.mesh); neon.push(n2.mat);
   }
   // glass + steel railing on the ball boundary
   boundaryRail(F, putS, { postMat: MAT.steel, railMat: MAT.steel, panelMat: null, step: 1.6, postW: 0.07 });
@@ -98,9 +108,9 @@ export function buildRooftop(ctx) {
   const nearCity = skyline({ count: 240, rMin: 46, rMax: 150, hMin: -56, hMax: -8, base: STREET_Y, seed: 314, tints: TINTS,
     avoid: (x, z) => Math.abs(x) < 36 && Math.abs(z) < 30 });                 // everything close is below the roof → a view
   const city = skyline({ count: 150, rMin: 165, rMax: 340, hMin: -30, hMax: 95, base: STREET_Y, seed: 2718, tints: TINTS });   // far towers rise up
-  g.add(nearCity.mesh, city.mesh);
+  lite.add(nearCity.mesh, city.mesh);
   const beacons = [];
-  for (const [x, h, z] of city.tops) { const b = new THREE.Mesh(new THREE.SphereGeometry(0.7, 6, 5), MAT.beacon); b.position.set(x, h + 1, z); g.add(b); beacons.push(b); }
+  for (const [x, h, z] of city.tops) { const b = new THREE.Mesh(new THREE.SphereGeometry(0.7, 6, 5), MAT.beacon); b.position.set(x, h + 1, z); lite.add(b); beacons.push(b); }
   // roof clutter on the nearby towers (we look down on them): penthouses, water tanks, AC units, antennas, the odd helipad
   {
     const parts = [];
@@ -113,11 +123,11 @@ export function buildRooftop(ctx) {
       if (i % 5 === 1) P(new THREE.CylinderGeometry(0.06, 0.08, 6, 4), 0x9a9a9a, x + w * 0.3, h + 3.2, z + d * 0.3);
       if (i % 11 === 4) { P(new THREE.CylinderGeometry(Math.min(w, d) * 0.4, Math.min(w, d) * 0.4, 0.12, 20), 0x3a3e44, x, h + 0.56, z); P(new THREE.BoxGeometry(Math.min(w, d) * 0.08, 0.02, Math.min(w, d) * 0.45), 0xf2f2f2, x, h + 0.64, z); }
     });
-    g.add(new THREE.Mesh(mergeGeometries(parts), vcMat({ flatShading: true })));
+    lite.add(new THREE.Mesh(mergeGeometries(parts), vcMat({ flatShading: true })));
   }
   // big lit billboards on a few towers facing the court
   for (const [x, y, z, ry, txt, col] of [[-70, 4, 60, Math.PI * 0.8, 'COCONUT', '#ffd23f'], [80, 6, -70, -Math.PI * 0.2, 'TUK TUK TOURS', '#3fe0ff'], [-90, -2, -55, Math.PI * 0.2, 'MANGO STICKY RICE', '#ff6a3f'], [95, 0, 55, -Math.PI * 0.8, 'SIAM TAKRAW', '#ff3fa0']]) {
-    const b = neonSign(txt, col, 18, 5); b.mesh.position.set(x, y + 6, z); b.mesh.rotation.y = ry; g.add(b.mesh); neon.push(b.mat);
+    const b = neonSign(txt, col, 18, 5); b.mesh.position.set(x, y + 6, z); b.mesh.rotation.y = ry; lite.add(b.mesh); neon.push(b.mat);
     for (const dx of [-5, 5]) put(MAT.steel, new THREE.BoxGeometry(0.7, y + 4 - STREET_Y, 0.7), x + Math.cos(ry) * dx, (y + 4 + STREET_Y) / 2, z - Math.sin(ry) * dx);   // tall pylons from the street
   }
 
@@ -127,14 +137,14 @@ export function buildRooftop(ctx) {
       let y = STREET_Y, w = 22 * s;
       for (let i = 0; i < 6; i++) { const h = 40 * s; put(MAT.steel, new THREE.BoxGeometry(w, h, w), x, y + h / 2, z); y += h; w *= 0.78; }
       put(MAT.steel, new THREE.CylinderGeometry(0.4, 1.2, 40 * s, 6), x, y + 20 * s, z);
-      const b = new THREE.Mesh(new THREE.SphereGeometry(1, 6, 5), MAT.beacon); b.position.set(x, y + 40 * s, z); g.add(b); beacons.push(b);
+      const b = new THREE.Mesh(new THREE.SphereGeometry(1, 6, 5), MAT.beacon); b.position.set(x, y + 40 * s, z); lite.add(b); beacons.push(b);
     }
   }
   // golden prang across the city, floodlit
   {
     const prang = new THREE.LatheGeometry([[0, 0], [14, 0], [14, 3], [11.5, 3], [11, 9], [9, 9.5], [8.5, 17], [6.5, 17.6], [5.5, 26], [3.5, 28.5], [2.5, 36], [1, 42], [0.4, 48], [0, 54]].map(([r, y]) => new THREE.Vector2(r, y)), 10);
     const pm = new THREE.MeshStandardMaterial({ color: 0xe8c07a, metalness: 0.5, roughness: 0.4, emissive: 0x8a5a18, emissiveIntensity: 0.4 });
-    const p = new THREE.Mesh(prang, pm); p.position.set(-30, STREET_Y + 10, 210); g.add(p);
+    const p = new THREE.Mesh(prang, pm); p.position.set(-30, STREET_Y + 10, 210); lite.add(p);
     neon.push(pm); prangMat = pm;
   }
   // the street grid far below (roads glow at night)
@@ -153,14 +163,15 @@ export function buildRooftop(ctx) {
   })();
   const street = new THREE.Mesh(new THREE.PlaneGeometry(800, 800), streetMat);
   street.rotation.x = -Math.PI / 2; street.position.y = STREET_Y;
-  g.add(street);
+  lite.add(street);
 
-  decor.build(g);
+  decor.build(lite);
   solid.build(g, { castShadow: true, receiveShadow: true });
 
-  let time = 0;
+  let time = 0, ultra = null, ultraOn = false;
   function update(dt) {
     time += dt;
+    if (ultraOn && ultra) { ultra.update(dt, time); return; }      // the High city is hidden on Ultra
     const on = Math.sin(time * 3) > 0.2;
     for (let i = 0; i < beacons.length; i++) beacons[i].visible = on !== (i % 2 === 0);
   }
@@ -174,5 +185,15 @@ export function buildRooftop(ctx) {
     MAT.beacon.visible = night;
     for (const b of beacons) b.material.visible = night;
   }
-  return { g, fx, update, setTime, fog: { day: [140, 820], night: [170, 900] } };
+  // ULTRA (see rooftop-ultra.js): a vast night city replaces `lite` — sky, haze and light restyled through `look`
+  const out = { g, fx, update, setTime, lite, fog: { day: [140, 820], night: [170, 900] } };
+  const fog0 = out.fog;
+  out.buildUltra = () => { ultra = buildRooftopUltra(ctx); return ultra.group; };
+  out.onUltra = (on) => {
+    ultraOn = on;
+    out.fog = on && ultra ? ultra.fog : fog0;
+    out.look = on && ultra ? ultra.look : undefined;
+    if (ctx.applyFog) ctx.applyFog();
+  };
+  return out;
 }
